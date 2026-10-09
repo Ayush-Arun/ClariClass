@@ -246,9 +246,10 @@ export default function TeacherDashboard({ sessionData, onEndSession }) {
 
   // Handle Document Upload Success
   const handleUploadSuccess = async (uploadRes) => {
-    if (uploadRes?.document_id) {
+    const docId = uploadRes?.document_id || uploadRes?.id;
+    if (docId) {
       try {
-        const docData = await apiRequest(`/documents/${uploadRes.document_id}`);
+        const docData = await apiRequest(`/documents/${docId}`);
         if (docData?.chunks && docData.chunks.length > 0) {
           const formattedChunks = docData.chunks.map((c, idx) => ({
             chunk_id: c.id,
