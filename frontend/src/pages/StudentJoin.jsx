@@ -1,16 +1,33 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 import { apiRequest } from '../api/client';
-import { GraduationCap, ArrowLeft } from 'lucide-react';
+import { GraduationCap, ArrowLeft, Camera, Sparkles, User, KeyRound, AlertCircle } from 'lucide-react';
+import UserAvatar from '../components/UserAvatar';
 
 export default function StudentJoin({ onJoinSuccess, onBack }) {
   const [roomCode, setRoomCode] = useState('ROOM304');
   const [displayName, setDisplayName] = useState('Alex Rivera');
+  const [avatarUrl, setAvatarUrl] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+  const fileInputRef = useRef(null);
+
+  const handleImageChange = (e) => {
+    if (e.target.files && e.target.files[0]) {
+      const file = e.target.files[0];
+      const reader = new FileReader();
+      reader.onload = (event) => {
+        setAvatarUrl(event.target.result);
+      };
+      reader.readAsDataURL(file);
+    }
+  };
 
   const handleJoin = async (e) => {
     e.preventDefault();
-    if (!roomCode || !displayName) return;
+    if (!roomCode.trim() || !displayName.trim()) {
+      setError('Please provide both room code and your full name.');
+      return;
+    }
     setLoading(true);
     setError('');
 
@@ -18,19 +35,23 @@ export default function StudentJoin({ onJoinSuccess, onBack }) {
       const res = await apiRequest('/sessions/join', {
         method: 'POST',
         body: JSON.stringify({
-          room_code: roomCode,
-          display_name: displayName
+          room_code: roomCode.trim().toUpperCase(),
+          display_name: displayName.trim()
         })
       });
 
-      onJoinSuccess(res);
+      onJoinSuccess({
+        ...res,
+        avatar_url: avatarUrl
+      });
     } catch (err) {
-      // Fallback for live preview
+      // Fallback for demo / offline preview
       onJoinSuccess({
         session_id: 1,
-        room_code: roomCode,
-        student_id: 1,
-        display_name: displayName
+        room_code: roomCode.trim().toUpperCase(),
+        student_id: Math.floor(Math.random() * 1000) + 10,
+        display_name: displayName.trim(),
+        avatar_url: avatarUrl
       });
     } finally {
       setLoading(false);
@@ -40,7 +61,7 @@ export default function StudentJoin({ onJoinSuccess, onBack }) {
   return (
     <div style={{
       minHeight: '100vh',
-      backgroundColor: '#EDF9F2',
+      backgroundColor: '#f2f8f5',
       display: 'flex',
       flexDirection: 'column',
       alignItems: 'center',
@@ -48,37 +69,38 @@ export default function StudentJoin({ onJoinSuccess, onBack }) {
       padding: '2rem 1rem'
     }}>
       {/* Brand Header */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', marginBottom: '2rem' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginBottom: '28px' }}>
         <div style={{
-          width: 40,
-          height: 40,
-          borderRadius: 10,
-          backgroundColor: '#0A4D3C',
+          width: '40px',
+          height: '40px',
+          borderRadius: '12px',
+          backgroundColor: '#0a4d3c',
+          color: '#ffffff',
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'center',
-          color: '#FFFFFF'
+          boxShadow: '0 4px 14px rgba(10, 77, 60, 0.25)'
         }}>
-          <GraduationCap size={24} />
+          <GraduationCap size={22} />
         </div>
-        <span style={{ fontSize: '1.75rem', fontWeight: 800, color: '#0A4D3C', letterSpacing: '-0.03em' }}>
-          FocusAI<span style={{ color: '#0A4D3C' }}>.</span>
+        <span style={{ fontSize: '24px', fontWeight: 800, color: '#0a4d3c', letterSpacing: '-0.02em' }}>
+          FocusAI<span style={{ color: '#0a4d3c' }}>.</span>
         </span>
       </div>
 
       {/* Main Join Card */}
-      <div style={{
+      <div className="focus-card" style={{
         width: '100%',
-        maxWidth: 440,
-        backgroundColor: '#FFFFFF',
-        borderRadius: 20,
-        padding: '2.5rem 2rem',
-        boxShadow: '0 10px 30px rgba(0, 0, 0, 0.05)',
-        border: '1px solid rgba(0, 0, 0, 0.04)'
+        maxWidth: '460px',
+        backgroundColor: '#ffffff',
+        borderRadius: '24px',
+        padding: '36px 32px',
+        boxShadow: '0 20px 40px -8px rgba(10, 77, 60, 0.08), 0 1px 3px rgba(0,0,0,0.04)',
+        border: '1px solid #e5ece8'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.4rem' }}>
-          <h2 style={{ fontSize: '1.5rem', fontWeight: 800, color: '#111827' }}>
-            Join Classroom
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '6px' }}>
+          <h2 style={{ fontSize: '22px', fontWeight: 800, color: '#111827', margin: 0 }}>
+            Join Classroom Session
           </h2>
           {onBack && (
             <button
@@ -86,86 +108,149 @@ export default function StudentJoin({ onJoinSuccess, onBack }) {
               style={{
                 display: 'flex',
                 alignItems: 'center',
-                gap: '0.25rem',
+                gap: '4px',
                 border: 'none',
                 backgroundColor: 'transparent',
-                color: '#6B7280',
-                fontSize: '0.8rem',
+                color: '#6b7280',
+                fontSize: '13px',
                 fontWeight: 600,
                 cursor: 'pointer'
               }}
             >
-              <ArrowLeft size={14} /> Back
+              <ArrowLeft size={15} /> Back
             </button>
           )}
         </div>
 
-        <p style={{ fontSize: '0.9rem', color: '#6B7280', marginBottom: '1.8rem' }}>
-          Enter the room code provided by your instructor.
+        <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 24px 0' }}>
+          Enter your name, optional photo, and the session room code from your teacher.
         </p>
 
         {error && (
           <div style={{
-            padding: '0.75rem 1rem',
-            backgroundColor: '#FEE2E2',
-            color: '#DC2626',
-            borderRadius: 10,
-            fontSize: '0.85rem',
-            marginBottom: '1.25rem'
+            padding: '12px 16px',
+            backgroundColor: '#fef2f2',
+            color: '#dc2626',
+            borderRadius: '12px',
+            fontSize: '13px',
+            marginBottom: '20px',
+            border: '1px solid #fee2e2',
+            display: 'flex',
+            alignItems: 'center',
+            gap: '8px'
           }}>
-            {error}
+            <AlertCircle size={16} />
+            <span>{error}</span>
           </div>
         )}
 
-        <form onSubmit={handleJoin} style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-          <div>
-            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#6B7280', letterSpacing: '0.05em', marginBottom: '0.4rem', textTransform: 'uppercase' }}>
-              ROOM CODE
-            </label>
-            <input
-              type="text"
-              required
-              value={roomCode}
-              onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
-              placeholder="e.g. ROOM304"
-              style={{
-                width: '100%',
-                padding: '0.85rem',
-                borderRadius: 10,
-                border: '1px solid #E5E7EB',
-                backgroundColor: '#F9FAFB',
-                fontSize: '1.1rem',
-                fontWeight: 700,
-                letterSpacing: '0.15em',
-                textAlign: 'center',
-                fontFamily: 'var(--font-mono)',
-                color: '#111827',
-                outline: 'none'
-              }}
-            />
+        <form onSubmit={handleJoin} style={{ display: 'flex', flexDirection: 'column', gap: '18px' }}>
+          
+          {/* Avatar Upload / Monogram Preview */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '16px', backgroundColor: '#f8fbf9', padding: '12px 16px', borderRadius: '16px', border: '1px solid #e5ece8' }}>
+            <div style={{ position: 'relative' }}>
+              <UserAvatar name={displayName || 'Student'} avatarUrl={avatarUrl} size={54} />
+              <button
+                type="button"
+                onClick={() => fileInputRef.current?.click()}
+                style={{
+                  position: 'absolute',
+                  bottom: -4,
+                  right: -4,
+                  width: '24px',
+                  height: '24px',
+                  borderRadius: '50%',
+                  backgroundColor: '#0a4d3c',
+                  color: '#ffffff',
+                  border: '2px solid #ffffff',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  cursor: 'pointer'
+                }}
+                title="Upload custom photo"
+              >
+                <Camera size={12} />
+              </button>
+              <input 
+                type="file" 
+                ref={fileInputRef} 
+                onChange={handleImageChange} 
+                accept="image/*" 
+                style={{ display: 'none' }} 
+              />
+            </div>
+            <div>
+              <div style={{ fontSize: '13px', fontWeight: 700, color: '#111827' }}>
+                Profile Image / Avatar
+              </div>
+              <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>
+                {avatarUrl ? 'Custom photo selected' : 'Auto-generated dynamic initials'}
+              </div>
+            </div>
           </div>
 
+          {/* Display Name input */}
           <div>
-            <label style={{ display: 'block', fontSize: '0.75rem', fontWeight: 700, color: '#6B7280', letterSpacing: '0.05em', marginBottom: '0.4rem', textTransform: 'uppercase' }}>
-              YOUR DISPLAY NAME
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#374151', marginBottom: '6px' }}>
+              FULL NAME / STUDENT ID
             </label>
-            <input
-              type="text"
-              required
-              value={displayName}
-              onChange={(e) => setDisplayName(e.target.value)}
-              placeholder="e.g. Alex Rivera"
-              style={{
-                width: '100%',
-                padding: '0.85rem',
-                borderRadius: 10,
-                border: '1px solid #E5E7EB',
-                backgroundColor: '#F9FAFB',
-                fontSize: '0.95rem',
-                color: '#111827',
-                outline: 'none'
-              }}
-            />
+            <div style={{ position: 'relative' }}>
+              <input
+                type="text"
+                required
+                value={displayName}
+                onChange={(e) => setDisplayName(e.target.value)}
+                placeholder="e.g. Marcus Webb or Priya Nair"
+                style={{
+                  width: '100%',
+                  padding: '11px 14px 11px 38px',
+                  borderRadius: '12px',
+                  border: '1.5px solid #e5e7eb',
+                  backgroundColor: '#ffffff',
+                  fontSize: '14px',
+                  color: '#111827',
+                  outline: 'none',
+                  transition: 'border-color 0.2s'
+                }}
+                onFocus={(e) => e.target.style.borderColor = '#0a4d3c'}
+                onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
+              />
+              <User size={16} style={{ position: 'absolute', left: 12, top: 14, color: '#9ca3af' }} />
+            </div>
+          </div>
+
+          {/* Room Code input */}
+          <div>
+            <label style={{ display: 'block', fontSize: '12px', fontWeight: 700, color: '#374151', marginBottom: '6px' }}>
+              CLASSROOM ROOM CODE
+            </label>
+            <div style={{ position: 'relative' }}>
+              <input
+                type="text"
+                required
+                value={roomCode}
+                onChange={(e) => setRoomCode(e.target.value.toUpperCase())}
+                placeholder="e.g. ROOM304"
+                style={{
+                  width: '100%',
+                  padding: '11px 14px 11px 38px',
+                  borderRadius: '12px',
+                  border: '1.5px solid #e5e7eb',
+                  backgroundColor: '#ffffff',
+                  fontSize: '15px',
+                  fontWeight: 700,
+                  fontFamily: 'var(--font-mono)',
+                  letterSpacing: '0.1em',
+                  color: '#0a4d3c',
+                  outline: 'none',
+                  transition: 'border-color 0.2s'
+                }}
+                onFocus={(e) => e.target.style.borderColor = '#0a4d3c'}
+                onBlur={(e) => e.target.style.borderColor = '#e5e7eb'}
+              />
+              <KeyRound size={16} style={{ position: 'absolute', left: 12, top: 14, color: '#9ca3af' }} />
+            </div>
           </div>
 
           <button
@@ -173,19 +258,31 @@ export default function StudentJoin({ onJoinSuccess, onBack }) {
             disabled={loading}
             style={{
               width: '100%',
-              backgroundColor: '#0A4D3C',
-              color: '#FFFFFF',
+              backgroundColor: '#0a4d3c',
+              color: '#ffffff',
               border: 'none',
-              borderRadius: 12,
-              padding: '0.9rem',
-              fontSize: '0.95rem',
+              borderRadius: '14px',
+              padding: '12px',
+              fontSize: '14px',
               fontWeight: 700,
-              cursor: 'pointer',
-              marginTop: '0.5rem',
-              boxShadow: '0 4px 12px rgba(10, 77, 60, 0.2)'
+              cursor: loading ? 'wait' : 'pointer',
+              marginTop: '8px',
+              boxShadow: '0 4px 14px rgba(10, 77, 60, 0.25)',
+              transition: 'all 0.18s ease',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              gap: '8px'
             }}
           >
-            {loading ? 'Joining Session...' : 'Enter Live Session'}
+            {loading ? (
+              <span>Connecting Telemetry...</span>
+            ) : (
+              <>
+                <Sparkles size={16} />
+                <span>Enter Live Classroom</span>
+              </>
+            )}
           </button>
         </form>
       </div>

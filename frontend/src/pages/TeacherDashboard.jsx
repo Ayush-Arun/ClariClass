@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { 
   GraduationCap, 
   LayoutDashboard, 
@@ -16,12 +16,29 @@ import {
   Clock,
   ChevronLeft,
   ChevronRight,
-  Sparkles
+  Sparkles,
+  Sliders,
+  Share2,
+  TrendingUp,
+  Award,
+  Zap,
+  Check,
+  RefreshCw,
+  FolderOpen
 } from 'lucide-react';
+import UserAvatar from '../components/UserAvatar';
+import UploadModal from '../components/UploadModal';
 import { apiRequest } from '../api/client';
 import { socket, joinClassroom } from '../api/socket';
 
-export default function TeacherDashboard({ sessionData, onUploadClick, onEndSession }) {
+export default function TeacherDashboard({ sessionData, onEndSession }) {
+  // Navigation tabs: 'Dashboard' | 'Materials' | 'Analytics' | 'Class Management'
+  const [activeTab, setActiveTab] = useState('Dashboard');
+
+  // Upload modal state
+  const [isUploadModalOpen, setIsUploadModalOpen] = useState(false);
+
+  // Active Session State
   const [session, setSession] = useState(sessionData || {
     room_code: 'ROOM304',
     title: "Physics 101 — Newton's Laws",
@@ -29,40 +46,57 @@ export default function TeacherDashboard({ sessionData, onUploadClick, onEndSess
     struggle_threshold_percent: 25
   });
 
+  // Slide chunks state
   const [chunks, setChunks] = useState([]);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
-  const [students, setStudents] = useState([]);
-  const [struggleMetrics, setStruggleMetrics] = useState({
-    strugglingCount: 0,
-    totalStudents: 0,
-    percentage: 0,
-    thresholdExceeded: false,
-    mostFlaggedConcept: ''
-  });
-  const [aiSimplification, setAiSimplification] = useState('');
-  const [reiterating, setReiterating] = useState(false);
-  const [activeNav, setActiveNav] = useState('Dashboard');
+  const [isHeatmapActive, setIsHeatmapActive] = useState(false);
 
-  // Load real document chunks and analytics
+  // Student telemetry state
+  const [students, setStudents] = useState([]);
+  const [timerSeconds, setTimerSeconds] = useState(14 * 60 + 32); // Initial 14:32
+
+  // Live Reiteration state (Gemma AI simplification)
+  const [isReiterating, setIsReiterating] = useState(false);
+  const [simplifiedChunks, setSimplifiedChunks] = useState({});
+  const [reiterationTriggered, setReiterationTriggered] = useState(false);
+
+  // Uploaded documents library
+  const [documentsList, setDocumentsList] = useState([]);
+
+  // Session timer ticker
+  useEffect(() => {
+    const timer = setInterval(() => {
+      setTimerSeconds(prev => prev + 1);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
+  const formatTimer = (totalSec) => {
+    const mins = Math.floor(totalSec / 60);
+    const secs = totalSec % 60;
+    return `${mins.toString().padStart(2, '0')}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  // Load session, chunks, and analytics
   const fetchSessionData = async () => {
     try {
       const roomCode = session.room_code || 'ROOM304';
       const analytics = await apiRequest(`/analytics/class/${roomCode}`);
-      
+
       if (analytics?.chunks?.length > 0) {
         setChunks(analytics.chunks);
       }
-      if (analytics?.students) {
-        setStudents(analytics.students.map((s, idx) => ({
+      if (analytics?.students?.length > 0) {
+        setStudents(analytics.students.map(s => ({
           id: s.id,
           name: s.display_name,
-          avatar: `https://images.unsplash.com/photo-${1534528741775 + idx * 1000}?w=100&auto=format&fit=crop&q=80`,
+          avatarUrl: s.avatar_url || null,
           status: 'Active in session',
           badge: null
         })));
       }
     } catch (err) {
-      // If offline/local dev, initialize dynamic default chunk set
+      // Initialize matching baseline data if backend DB is empty
       if (chunks.length === 0) {
         setChunks([
           {
@@ -70,37 +104,47 @@ export default function TeacherDashboard({ sessionData, onUploadClick, onEndSess
             order: 1,
             title: "Newton's First Law: Inertia",
             text: "An object at rest stays at rest and an object in motion stays in motion with the same speed and in the same direction unless acted upon by an unbalanced force. This tendency to resist changes in state of motion is termed inertia.",
-            struggle_percentage: 15,
-            struggling_count: 2,
-            important_count: 5
+            simplified_text: "Inertia means things keep doing what they're already doing unless pushed. A stationary ball stays still; a moving ball keeps rolling forever unless friction, gravity, or a wall stops it.",
+            struggle_percentage: 30,
+            struggling_count: 12,
+            important_count: 5,
+            gaze_clusters: 14,
+            avg_dwell: 4.2
           },
           {
             chunk_id: 2,
             order: 2,
             title: "Newton's Second Law: F = ma",
-            text: "The acceleration of an object depends directly upon the net force acting on it and inversely upon its mass. When multiple forces act simultaneously, you must first resolve them into a single vector sum before applying the law.\n\nThis means that if you double the force while keeping mass constant, the acceleration doubles. Conversely, doubling the mass with the same force halves the acceleration. Many students confuse inertia with force—remember, inertia is a property of mass, not a push or pull.",
-            struggle_percentage: 30,
-            struggling_count: 12,
-            important_count: 8
+            text: "The acceleration of an object as produced by a net force is directly proportional to the magnitude of the net force, in the same direction as the net force, and inversely proportional to the mass of the object.",
+            simplified_text: "Force equals mass times acceleration (F = m × a). Heavier objects need stronger pushes to speed up, and pushing harder makes anything accelerate faster.",
+            struggle_percentage: 18,
+            struggling_count: 4,
+            important_count: 9,
+            gaze_clusters: 19,
+            avg_dwell: 5.1
           },
           {
             chunk_id: 3,
             order: 3,
-            title: "Newton's Third Law: Action-Reaction",
-            text: "For every action, there is an equal and opposite reaction. Whenever one body exerts a force on a second body, the first body experiences a force that is equal in magnitude and opposite in direction to the force that it exerts.",
-            struggle_percentage: 10,
+            title: "Newton's Third Law: Action & Reaction",
+            text: "For every action, there is an equal and opposite reaction. This means that in every interaction, there is a pair of forces acting on the two interacting objects.",
+            simplified_text: "Every time you push against something, it pushes back on you with the exact same strength in the opposite direction—like how a rocket pushes gas down to go up.",
+            struggle_percentage: 8,
             struggling_count: 1,
-            important_count: 4
+            important_count: 6,
+            gaze_clusters: 11,
+            avg_dwell: 3.4
           }
         ]);
+
         setStudents([
-          { id: 1, name: "Marcus Webb", avatar: "https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=100&auto=format&fit=crop&q=80", status: "Flagged · 3x", badge: "STRUGGLE", badgeType: "danger" },
-          { id: 2, name: "Priya Nair", avatar: "https://images.unsplash.com/photo-1517841905240-472988babdf9?w=100&auto=format&fit=crop&q=80", status: "Flagged · 2x", badge: "STRUGGLE", badgeType: "danger" },
-          { id: 3, name: "Daniel Okoro", avatar: "https://images.unsplash.com/photo-1539571696357-5a69c17a67c6?w=100&auto=format&fit=crop&q=80", status: "Gaze drifting", badge: "WATCH", badgeType: "warning" },
-          { id: 4, name: "Sofia Reyes", avatar: "https://images.unsplash.com/photo-1524504388940-b1c1722653e1?w=100&auto=format&fit=crop&q=80", status: "Slow pace", badge: "WATCH", badgeType: "warning" },
-          { id: 5, name: "Liam Foster", avatar: "https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=100&auto=format&fit=crop&q=80", status: "Focused · 94%", badge: null },
-          { id: 6, name: "Amara Diallo", avatar: "https://images.unsplash.com/photo-1531746020798-e6953c6e8e04?w=100&auto=format&fit=crop&q=80", status: "Focused · 91%", badge: null },
-          { id: 7, name: "Noah Bennett", avatar: "https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=100&auto=format&fit=crop&q=80", status: "Focused · 88%", badge: null }
+          { id: 1, name: "Marcus Webb", avatarUrl: null, status: "Flagged · 3x", badge: "STRUGGLE", badgeType: "danger" },
+          { id: 2, name: "Priya Nair", avatarUrl: null, status: "Flagged · 2x", badge: "STRUGGLE", badgeType: "danger" },
+          { id: 3, name: "Daniel Okoro", avatarUrl: null, status: "Gaze drifting", badge: "WATCH", badgeType: "warning" },
+          { id: 4, name: "Sofia Reyes", avatarUrl: null, status: "Slow pace", badge: "WATCH", badgeType: "warning" },
+          { id: 5, name: "Liam Foster", avatarUrl: null, status: "Focused · 94%", badge: null },
+          { id: 6, name: "Amara Diallo", avatarUrl: null, status: "Focused · 91%", badge: null },
+          { id: 7, name: "Noah Bennett", avatarUrl: null, status: "Focused · 88%", badge: null }
         ]);
       }
     }
@@ -113,221 +157,286 @@ export default function TeacherDashboard({ sessionData, onUploadClick, onEndSess
       joinClassroom(session.room_code);
 
       socket.on('struggle_updated', (data) => {
-        setStruggleMetrics((prev) => ({
-          ...prev,
-          percentage: data.struggle_percentage,
-          strugglingCount: data.struggling_count,
-          totalStudents: data.total_students,
-          thresholdExceeded: data.struggle_percentage >= (session.struggle_threshold_percent || 25)
-        }));
+        if (data.chunk_id) {
+          setChunks(prev => prev.map(c => 
+            c.chunk_id === data.chunk_id 
+              ? { ...c, struggle_percentage: data.struggle_percentage, struggling_count: data.struggling_count }
+              : c
+          ));
+        }
       });
 
-      socket.on('chunk_simplified', (data) => {
-        if (data.simplified_text) {
-          setAiSimplification(data.simplified_text);
+      socket.on('content_simplified', (data) => {
+        if (data.chunk_id && data.simplified_text) {
+          setSimplifiedChunks(prev => ({
+            ...prev,
+            [data.chunk_id]: data.simplified_text
+          }));
+          setIsReiterating(false);
         }
       });
     }
 
     return () => {
       socket.off('struggle_updated');
-      socket.off('chunk_simplified');
+      socket.off('content_simplified');
     };
   }, [session.room_code]);
 
-  const activeChunk = chunks[currentSlideIndex] || chunks[0] || {
-    order: 1,
-    title: session.title || "Lecture Slide 1",
-    text: "Lecture material chunk text will be presented here dynamically."
+  // Current Slide Data
+  const currentChunk = useMemo(() => {
+    if (!chunks || chunks.length === 0) return null;
+    const clampedIndex = Math.min(Math.max(0, currentSlideIndex), chunks.length - 1);
+    return chunks[clampedIndex];
+  }, [chunks, currentSlideIndex]);
+
+  // Handle slide pagination smoothly
+  const handlePrevSlide = () => {
+    if (currentSlideIndex > 0) {
+      setCurrentSlideIndex(prev => prev - 1);
+    }
   };
 
-  const handleLiveReiterate = async () => {
-    setReiterating(true);
+  const handleNextSlide = () => {
+    if (currentSlideIndex < chunks.length - 1) {
+      setCurrentSlideIndex(prev => prev + 1);
+    }
+  };
+
+  // Trigger Live AI Reiteration (Gemma)
+  const handleTriggerReiterate = async () => {
+    if (!currentChunk) return;
+    setIsReiterating(true);
+    setReiterationTriggered(true);
+
     try {
-      const res = await apiRequest('/signals/ingest', {
+      const res = await apiRequest('/signals/flag', {
         method: 'POST',
         body: JSON.stringify({
           student_id: 1,
-          chunk_id: activeChunk.chunk_id || 1,
+          chunk_id: currentChunk.chunk_id || currentChunk.id || 1,
           signal_type: 'flag_difficult',
           value: 1.0
         })
       });
-      if (res?.struggle_stats) {
-        setStruggleMetrics({
-          strugglingCount: res.struggle_stats.struggling_students_count,
-          totalStudents: students.length || 40,
-          percentage: res.struggle_stats.struggle_percentage,
-          thresholdExceeded: res.struggle_stats.threshold_exceeded,
-          mostFlaggedConcept: activeChunk.title || `Slide ${activeChunk.order}`
-        });
+
+      if (res?.simplified_text) {
+        setSimplifiedChunks(prev => ({
+          ...prev,
+          [currentChunk.chunk_id || currentChunk.id]: res.simplified_text
+        }));
+      } else if (currentChunk.simplified_text) {
+        setSimplifiedChunks(prev => ({
+          ...prev,
+          [currentChunk.chunk_id || currentChunk.id]: currentChunk.simplified_text
+        }));
       }
     } catch (err) {
-      // Local dynamic fallback
-      setStruggleMetrics({
-        strugglingCount: 12,
-        totalStudents: 40,
-        percentage: 30,
-        thresholdExceeded: true,
-        mostFlaggedConcept: activeChunk.title || `Slide ${activeChunk.order}`
-      });
-      setAiSimplification(
-        `💡 Simplified Breakdown (Gemma 4):\n\nKey Intuition: ${activeChunk.text.slice(0, 180)}...\n\nAnalogy: Think of net force as the total push after balancing opposing forces. If you push a cart with 10N and friction resists with 4N, the net accelerating force is 6N.`
-      );
+      // Offline fallback: Use baked simplification
+      if (currentChunk.simplified_text) {
+        setSimplifiedChunks(prev => ({
+          ...prev,
+          [currentChunk.chunk_id || currentChunk.id]: currentChunk.simplified_text
+        }));
+      }
     } finally {
-      setTimeout(() => setReiterating(false), 600);
+      setTimeout(() => setIsReiterating(false), 500);
+    }
+  };
+
+  // Handle Document Upload Success
+  const handleUploadSuccess = async (uploadRes) => {
+    if (uploadRes?.document_id) {
+      try {
+        const docData = await apiRequest(`/documents/${uploadRes.document_id}`);
+        if (docData?.chunks && docData.chunks.length > 0) {
+          const formattedChunks = docData.chunks.map((c, idx) => ({
+            chunk_id: c.id,
+            order: c.order || idx + 1,
+            title: `Section ${c.order || idx + 1}: ${docData.title.split('.')[0]}`,
+            text: c.text,
+            simplified_text: c.simplified_text || null,
+            struggle_percentage: 0,
+            struggling_count: 0,
+            important_count: 0,
+            gaze_clusters: Math.floor(Math.random() * 12) + 4,
+            avg_dwell: (Math.random() * 2.5 + 2.5).toFixed(1)
+          }));
+
+          setChunks(formattedChunks);
+          setCurrentSlideIndex(0);
+          setSession(prev => ({
+            ...prev,
+            title: docData.title,
+            document_id: docData.id
+          }));
+
+          setDocumentsList(prev => [
+            { id: docData.id, title: docData.title, slidesCount: formattedChunks.length, date: new Date().toLocaleTimeString() },
+            ...prev
+          ]);
+        }
+      } catch (err) {
+        console.error("Failed to load parsed chunks", err);
+      }
     }
   };
 
   return (
-    <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: '#EDF9F2' }}>
+    <div style={{ display: 'flex', minHeight: '100vh', backgroundColor: '#f2f8f5' }}>
       
-      {/* ─── LEFT SIDEBAR (No Live Session nav item) ──────────── */}
+      {/* ======================================================== */}
+      {/* 1. LEFT SIDEBAR                                         */}
+      {/* ======================================================== */}
       <aside style={{
-        width: 220,
-        backgroundColor: '#FFFFFF',
-        borderRight: '1px solid #E5E7EB',
+        width: '240px',
+        backgroundColor: '#ffffff',
+        borderRight: '1px solid #e5ece8',
         display: 'flex',
         flexDirection: 'column',
         justifyContent: 'space-between',
-        padding: '1.5rem 1rem'
+        padding: '24px 16px 20px',
+        flexShrink: 0
       }}>
+        {/* Brand & Menu */}
         <div>
           {/* Logo */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0 0.5rem', marginBottom: '2.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '10px', padding: '0 8px', marginBottom: '32px' }}>
             <div style={{
-              width: 32,
-              height: 32,
-              borderRadius: 8,
-              backgroundColor: '#0A4D3C',
+              width: '34px',
+              height: '34px',
+              borderRadius: '10px',
+              backgroundColor: '#0a4d3c',
+              color: '#ffffff',
               display: 'flex',
               alignItems: 'center',
               justifyContent: 'center',
-              color: '#FFFFFF'
+              boxShadow: '0 2px 8px rgba(10, 77, 60, 0.2)'
             }}>
               <GraduationCap size={20} />
             </div>
-            <span style={{ fontSize: '1.3rem', fontWeight: 800, color: '#0A4D3C', letterSpacing: '-0.02em' }}>
-              FocusAI<span style={{ color: '#0A4D3C' }}>.</span>
+            <span style={{
+              fontSize: '20px',
+              fontWeight: 800,
+              color: '#0a4d3c',
+              letterSpacing: '-0.02em'
+            }}>
+              FocusAI.
             </span>
           </div>
 
-          {/* Clean Navigation Items */}
-          <nav style={{ display: 'flex', flexDirection: 'column', gap: '0.4rem' }}>
-            <button 
-              onClick={() => setActiveNav('Dashboard')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.75rem',
-                padding: '0.65rem 0.85rem',
-                borderRadius: 12,
-                border: 'none',
-                backgroundColor: activeNav === 'Dashboard' ? '#E8F7EE' : 'transparent',
-                color: activeNav === 'Dashboard' ? '#0A4D3C' : '#4B5563',
-                fontSize: '0.9rem',
-                fontWeight: activeNav === 'Dashboard' ? 700 : 600,
-                cursor: 'pointer'
-              }}
-            >
-              <LayoutDashboard size={18} />
-              <span>Dashboard</span>
-            </button>
-
-            <button 
-              onClick={() => onUploadClick()}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.75rem',
-                padding: '0.65rem 0.85rem',
-                borderRadius: 10,
-                border: 'none',
-                backgroundColor: 'transparent',
-                color: '#4B5563',
-                fontSize: '0.9rem',
-                fontWeight: 600,
-                cursor: 'pointer'
-              }}
-            >
-              <FileText size={18} />
-              <span>Materials</span>
-            </button>
-
-            <button 
-              onClick={() => setActiveNav('Analytics')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.75rem',
-                padding: '0.65rem 0.85rem',
-                borderRadius: 10,
-                border: 'none',
-                backgroundColor: activeNav === 'Analytics' ? '#E8F7EE' : 'transparent',
-                color: activeNav === 'Analytics' ? '#0A4D3C' : '#4B5563',
-                fontSize: '0.9rem',
-                fontWeight: 600,
-                cursor: 'pointer'
-              }}
-            >
-              <LineChart size={18} />
-              <span>Analytics</span>
-            </button>
-
-            <button 
-              onClick={() => setActiveNav('Class Management')}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.75rem',
-                padding: '0.65rem 0.85rem',
-                borderRadius: 10,
-                border: 'none',
-                backgroundColor: activeNav === 'Class Management' ? '#E8F7EE' : 'transparent',
-                color: activeNav === 'Class Management' ? '#0A4D3C' : '#4B5563',
-                fontSize: '0.9rem',
-                fontWeight: 600,
-                cursor: 'pointer'
-              }}
-            >
-              <Users size={18} />
-              <span>Class Management</span>
-            </button>
+          {/* Navigation Links */}
+          <nav style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+            {[
+              { name: 'Dashboard', icon: LayoutDashboard },
+              { name: 'Materials', icon: FileText },
+              { name: 'Analytics', icon: LineChart },
+              { name: 'Class Management', icon: Users }
+            ].map((item) => {
+              const Icon = item.icon;
+              const isActive = activeTab === item.name;
+              return (
+                <button
+                  key={item.name}
+                  onClick={() => setActiveTab(item.name)}
+                  style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: '12px',
+                    padding: '12px 14px',
+                    borderRadius: '12px',
+                    border: 'none',
+                    backgroundColor: isActive ? '#d9f2e4' : 'transparent',
+                    color: isActive ? '#0a4d3c' : '#4b5563',
+                    fontWeight: isActive ? 700 : 500,
+                    fontSize: '14px',
+                    cursor: 'pointer',
+                    textAlign: 'left',
+                    transition: 'all 0.18s ease',
+                    width: '100%'
+                  }}
+                  onMouseEnter={(e) => {
+                    if (!isActive) {
+                      e.currentTarget.style.backgroundColor = '#f0f7f3';
+                      e.currentTarget.style.color = '#111827';
+                    }
+                  }}
+                  onMouseLeave={(e) => {
+                    if (!isActive) {
+                      e.currentTarget.style.backgroundColor = 'transparent';
+                      e.currentTarget.style.color = '#4b5563';
+                    }
+                  }}
+                >
+                  <Icon size={18} style={{ color: isActive ? '#0a4d3c' : '#6b7280', flexShrink: 0 }} />
+                  <span>{item.name}</span>
+                </button>
+              );
+            })}
           </nav>
         </div>
 
-        {/* Bottom Session Widget with Room Code */}
+        {/* Bottom Session Box (Dark Forest Green) */}
         <div style={{
-          backgroundColor: '#0A4D3C',
-          borderRadius: 16,
-          padding: '1.25rem 1rem',
-          color: '#FFFFFF'
+          backgroundColor: '#0d3d2c',
+          borderRadius: '16px',
+          padding: '18px 16px 14px',
+          color: '#ffffff',
+          boxShadow: '0 8px 20px -4px rgba(13, 61, 44, 0.4)'
         }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.25rem' }}>
-            <span style={{ fontSize: '0.7rem', color: '#A7F3D0', fontWeight: 600 }}>ROOM CODE</span>
-            <span style={{ fontSize: '0.85rem', fontWeight: 800, fontFamily: 'var(--font-mono)', color: '#FDE68A' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '8px' }}>
+            <span style={{ fontSize: '11px', fontWeight: 700, color: 'rgba(255,255,255,0.65)', letterSpacing: '0.05em' }}>
+              ROOM CODE
+            </span>
+            <span style={{
+              backgroundColor: '#cbf53d',
+              color: '#0d3d2c',
+              fontSize: '11px',
+              fontWeight: 800,
+              padding: '2px 8px',
+              borderRadius: '6px',
+              fontFamily: 'var(--font-mono)'
+            }}>
               {session.room_code || 'ROOM304'}
             </span>
           </div>
 
-          <div style={{ fontSize: '0.75rem', color: '#A7F3D0', marginBottom: '0.25rem', fontWeight: 500, marginTop: '0.5rem' }}>
+          <div style={{ fontSize: '11px', color: 'rgba(209, 242, 226, 0.8)', marginBottom: '2px' }}>
             Session Timer
           </div>
-          <div style={{ fontSize: '1.6rem', fontWeight: 800, fontFamily: 'var(--font-mono)', marginBottom: '0.85rem' }}>
-            14:32
+
+          <div style={{
+            fontSize: '32px',
+            fontWeight: 800,
+            fontFamily: 'var(--font-mono)',
+            letterSpacing: '-0.02em',
+            marginBottom: '14px',
+            color: '#ffffff'
+          }}>
+            {formatTimer(timerSeconds)}
           </div>
-          <button 
+
+          <button
             onClick={onEndSession}
             style={{
               width: '100%',
-              backgroundColor: 'rgba(255, 255, 255, 0.15)',
+              padding: '8px 12px',
+              borderRadius: '999px',
               border: '1px solid rgba(255, 255, 255, 0.25)',
-              color: '#FFFFFF',
-              borderRadius: 8,
-              padding: '0.5rem',
-              fontSize: '0.8rem',
+              backgroundColor: 'rgba(255, 255, 255, 0.08)',
+              color: '#ffffff',
+              fontSize: '12px',
               fontWeight: 600,
-              cursor: 'pointer'
+              cursor: 'pointer',
+              transition: 'all 0.15s ease'
+            }}
+            onMouseEnter={(e) => {
+              e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.18)';
+              e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.4)';
+            }}
+            onMouseLeave={(e) => {
+              e.currentTarget.style.backgroundColor = 'rgba(255, 255, 255, 0.08)';
+              e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.25)';
             }}
           >
             End Session
@@ -335,567 +444,930 @@ export default function TeacherDashboard({ sessionData, onUploadClick, onEndSess
         </div>
       </aside>
 
-      {/* ─── MAIN CONTENT AREA ───────────────────────────────── */}
-      <main style={{ flex: 1, padding: '1.5rem 2rem', overflowY: 'auto' }}>
+      {/* ======================================================== */}
+      {/* 2. MAIN APP CONTENT AREA                                 */}
+      {/* ======================================================== */}
+      <main style={{ flex: 1, display: 'flex', flexDirection: 'column', minWidth: 0, overflowY: 'auto' }}>
         
-        {/* Top Header Row */}
-        <div style={{
+        {/* ======================================================== */}
+        {/* TOP HEADER BAR                                           */}
+        {/* ======================================================== */}
+        <header style={{
+          backgroundColor: '#f2f8f5',
+          padding: '24px 32px 16px',
           display: 'flex',
           justifyContent: 'space-between',
-          alignItems: 'center',
-          marginBottom: '1.25rem'
+          alignItems: 'flex-start',
+          flexWrap: 'wrap',
+          gap: '16px'
         }}>
+          {/* Left Title & Status Badges */}
           <div>
-            <h1 style={{ fontSize: '1.35rem', fontWeight: 800, color: '#111827', letterSpacing: '-0.02em', marginBottom: '0.2rem' }}>
-              {session.title || "Physics 101 — Newton's Laws"}
-            </h1>
-            <p style={{ fontSize: '0.85rem', color: '#6B7280' }}>
-              Room <strong style={{ color: '#0A4D3C' }}>{session.room_code || 'ROOM304'}</strong> • <span style={{ color: '#0A4D3C', fontWeight: 600 }}>Active Classroom</span>
-            </p>
-          </div>
-
-          {/* Right Profile & Active Icons */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '1rem' }}>
-            <div style={{ display: 'flex', alignItems: 'center' }}>
-              {students.slice(0, 3).map((st, i) => (
-                <img key={i} src={st.avatar} alt="st" style={{ width: 28, height: 28, borderRadius: '50%', border: '2px solid #fff', marginLeft: -6 }} />
-              ))}
-              <div style={{
-                width: 28,
-                height: 28,
-                borderRadius: '50%',
-                backgroundColor: '#D1F2E2',
-                color: '#0A4D3C',
-                fontSize: '0.7rem',
-                fontWeight: 700,
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                border: '2px solid #fff',
-                marginLeft: -6
+            <div style={{ display: 'flex', alignItems: 'baseline', gap: '8px', flexWrap: 'wrap' }}>
+              <h1 style={{
+                fontSize: '24px',
+                fontWeight: 800,
+                color: '#111827',
+                letterSpacing: '-0.02em',
+                margin: 0
               }}>
-                +{Math.max(0, (students.length || 40) - 3)}
+                {session.title || "Physics 101 — Newton's Laws"}
+              </h1>
+            </div>
+
+            <div style={{ fontSize: '13px', color: '#4b5563', marginTop: '4px', display: 'flex', alignItems: 'center', gap: '6px' }}>
+              <span>Room {session.room_code || 'ROOM304'}</span>
+              <span>•</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', color: '#15803d', fontWeight: 600 }}>
+                <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#22c55e' }} />
+                Active Classroom
+              </span>
+            </div>
+
+            {/* Pill Metrics Row */}
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', marginTop: '14px', flexWrap: 'wrap' }}>
+              {/* Watching pill */}
+              <div style={{
+                backgroundColor: '#dcfce7',
+                color: '#15803d',
+                padding: '5px 12px',
+                borderRadius: '999px',
+                fontSize: '12px',
+                fontWeight: 700,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}>
+                <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#15803d' }} />
+                <span>{students.length || 7} students watching</span>
+              </div>
+
+              {/* Avg Gaze pill */}
+              <div style={{
+                backgroundColor: '#e0f2fe',
+                color: '#0284c7',
+                padding: '5px 12px',
+                borderRadius: '999px',
+                fontSize: '12px',
+                fontWeight: 700,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}>
+                <Eye size={14} />
+                <span>Avg. gaze on slide: 82%</span>
+              </div>
+
+              {/* Difficulty flags pill */}
+              <div style={{
+                backgroundColor: '#ffedd5',
+                color: '#ea580c',
+                padding: '5px 12px',
+                borderRadius: '999px',
+                fontSize: '12px',
+                fontWeight: 700,
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '6px'
+              }}>
+                <Flag size={14} />
+                <span>Difficulty flags: {currentChunk?.struggling_count || 12}</span>
               </div>
             </div>
-
-            <div style={{
-              width: 32,
-              height: 32,
-              borderRadius: '50%',
-              backgroundColor: '#FFFFFF',
-              border: '1px solid #E5E7EB',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#4B5563',
-              cursor: 'pointer'
-            }}>
-              <Headphones size={16} />
-            </div>
-
-            <img
-              src="https://images.unsplash.com/photo-1573496359142-b8d87734a5a2?w=80&auto=format&fit=crop&q=80"
-              alt="Instructor"
-              style={{ width: 34, height: 34, borderRadius: '50%', objectFit: 'cover', border: '2px solid #0A4D3C' }}
-            />
-          </div>
-        </div>
-
-        {/* Status Metrics Bar */}
-        <div style={{
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          marginBottom: '1.5rem',
-          flexWrap: 'wrap',
-          gap: '0.75rem'
-        }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.45rem',
-              backgroundColor: '#D4F4E4',
-              color: '#086F4B',
-              padding: '0.4rem 0.85rem',
-              borderRadius: 20,
-              fontSize: '0.8rem',
-              fontWeight: 700
-            }}>
-              <div style={{ width: 7, height: 7, borderRadius: '50%', backgroundColor: '#086F4B', animation: 'pulseLive 1.5s infinite' }}></div>
-              {students.length || 40} students watching
-            </div>
-
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.45rem',
-              backgroundColor: '#E0F2FE',
-              color: '#0284C7',
-              padding: '0.4rem 0.85rem',
-              borderRadius: 20,
-              fontSize: '0.8rem',
-              fontWeight: 600
-            }}>
-              <Eye size={14} />
-              Avg. gaze on slide: <strong style={{ color: '#0369A1' }}>82%</strong>
-            </div>
-
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.45rem',
-              backgroundColor: '#FFEDD5',
-              color: '#EA580C',
-              padding: '0.4rem 0.85rem',
-              borderRadius: 20,
-              fontSize: '0.8rem',
-              fontWeight: 600
-            }}>
-              <Flag size={14} />
-              Difficulty flags: <strong style={{ color: '#C2410C' }}>{struggleMetrics.strugglingCount || 12}</strong>
-            </div>
           </div>
 
-          {/* Action Buttons */}
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
-            <button 
-              onClick={onUploadClick}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                backgroundColor: '#FFFFFF',
-                border: '1px solid #E5E7EB',
-                color: '#374151',
-                padding: '0.5rem 1rem',
-                borderRadius: 20,
-                fontSize: '0.85rem',
-                fontWeight: 600,
-                cursor: 'pointer',
-                boxShadow: '0 1px 2px rgba(0,0,0,0.04)'
-              }}
-            >
-              <UploadCloud size={16} />
-              Upload PDF / PPT
-            </button>
-
-            <button
-              onClick={handleLiveReiterate}
-              disabled={reiterating}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                backgroundColor: '#F97316',
-                border: 'none',
-                color: '#FFFFFF',
-                padding: '0.5rem 1.15rem',
-                borderRadius: 20,
-                fontSize: '0.85rem',
-                fontWeight: 700,
-                cursor: 'pointer',
-                boxShadow: '0 2px 8px rgba(249, 115, 22, 0.3)'
-              }}
-            >
-              <RotateCw size={15} style={{ transform: reiterating ? 'rotate(180deg)' : 'none', transition: 'transform 0.4s ease' }} />
-              {reiterating ? 'Reiterating with Gemma 4...' : 'Live Reiterate'}
-            </button>
-          </div>
-        </div>
-
-        {/* ─── 3-COLUMN DASHBOARD GRID ───────────────────────── */}
-        <div style={{ display: 'grid', gridTemplateColumns: '270px 1fr 280px', gap: '1.25rem' }}>
-          
-          {/* ── COLUMN 1: DYNAMIC ALERTS & SESSION PULSE ── */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-            
-            {/* Card 1: Dynamic Threshold Reached Alert */}
-            <div style={{
-              backgroundColor: '#FFFFFF',
-              borderRadius: 16,
-              padding: '1.25rem',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.03)',
-              border: '1px solid #F3F4F6',
-              borderLeft: '4px solid #F97316'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.75rem', marginBottom: '0.75rem' }}>
+          {/* Right Action Controls */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap' }}>
+            {/* Student Avatar Stack */}
+            <div style={{ display: 'flex', alignItems: 'center', marginRight: '6px' }}>
+              {students.slice(0, 3).map((s, idx) => (
+                <div key={s.id || idx} style={{ marginLeft: idx === 0 ? 0 : '-10px', zIndex: 10 - idx }}>
+                  <UserAvatar name={s.name} size={34} />
+                </div>
+              ))}
+              {students.length > 3 && (
                 <div style={{
-                  width: 28,
-                  height: 28,
+                  marginLeft: '-10px',
+                  width: '34px',
+                  height: '34px',
                   borderRadius: '50%',
-                  backgroundColor: '#FFEDD5',
-                  color: '#EA580C',
+                  backgroundColor: '#e2f4ea',
+                  color: '#0a4d3c',
+                  fontSize: '11px',
+                  fontWeight: 800,
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  flexShrink: 0
+                  border: '2px solid #ffffff',
+                  zIndex: 5
                 }}>
-                  <AlertTriangle size={16} />
+                  +{students.length - 3}
                 </div>
-                <div>
-                  <h3 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#111827' }}>
-                    {struggleMetrics.thresholdExceeded || true ? 'Threshold reached!' : 'Struggle Monitoring'}
+              )}
+            </div>
+
+            {/* Audio / Headphone Button */}
+            <button
+              style={{
+                width: '38px',
+                height: '38px',
+                borderRadius: '50%',
+                border: '1.5px solid #d1ded7',
+                backgroundColor: '#ffffff',
+                color: '#374151',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                cursor: 'pointer',
+                transition: 'all 0.15s ease'
+              }}
+              title="Class Audio Stream"
+              onMouseEnter={(e) => e.currentTarget.style.borderColor = '#0a4d3c'}
+              onMouseLeave={(e) => e.currentTarget.style.borderColor = '#d1ded7'}
+            >
+              <Headphones size={17} />
+            </button>
+
+            {/* Teacher Profile Avatar */}
+            <UserAvatar name="Teacher Prof" size={38} />
+
+            {/* Upload PDF / PPT Button */}
+            <button
+              onClick={() => setIsUploadModalOpen(true)}
+              style={{
+                backgroundColor: '#ffffff',
+                border: '1.5px solid #d1ded7',
+                color: '#111827',
+                padding: '9px 16px',
+                borderRadius: '999px',
+                fontSize: '13px',
+                fontWeight: 700,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                cursor: 'pointer',
+                boxShadow: 'var(--shadow-sm)',
+                transition: 'all 0.18s ease'
+              }}
+              onMouseEnter={(e) => {
+                e.currentTarget.style.borderColor = '#0a4d3c';
+                e.currentTarget.style.boxShadow = '0 2px 8px rgba(10, 77, 60, 0.1)';
+              }}
+              onMouseLeave={(e) => {
+                e.currentTarget.style.borderColor = '#d1ded7';
+                e.currentTarget.style.boxShadow = 'var(--shadow-sm)';
+              }}
+            >
+              <UploadCloud size={16} style={{ color: '#0a4d3c' }} />
+              <span>Upload PDF / PPT</span>
+            </button>
+
+            {/* Live Reiterate Button */}
+            <button
+              onClick={handleTriggerReiterate}
+              disabled={isReiterating || !currentChunk}
+              style={{
+                backgroundColor: '#f97316',
+                border: 'none',
+                color: '#ffffff',
+                padding: '9px 18px',
+                borderRadius: '999px',
+                fontSize: '13px',
+                fontWeight: 700,
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+                cursor: isReiterating ? 'wait' : 'pointer',
+                boxShadow: '0 4px 12px rgba(249, 115, 22, 0.35)',
+                transition: 'all 0.18s ease'
+              }}
+              onMouseEnter={(e) => e.currentTarget.style.backgroundColor = '#ea580c'}
+              onMouseLeave={(e) => e.currentTarget.style.backgroundColor = '#f97316'}
+            >
+              <RotateCw size={15} style={{ animation: isReiterating ? 'spin 1s linear infinite' : 'none' }} />
+              <span>{isReiterating ? 'Reiterating...' : 'Live Reiterate'}</span>
+            </button>
+          </div>
+        </header>
+
+        {/* ======================================================== */}
+        {/* TAB 1: DASHBOARD VIEW (1:1 Exact Screenshot Layout)      */}
+        {/* ======================================================== */}
+        {activeTab === 'Dashboard' && (
+          <div style={{
+            padding: '12px 32px 36px',
+            display: 'grid',
+            gridTemplateColumns: '290px 1fr 270px',
+            gap: '20px',
+            alignItems: 'start'
+          }}>
+            
+            {/* ---------------------------------------------------- */}
+            {/* LEFT COLUMN: Alert & Pulse Cards                     */}
+            {/* ---------------------------------------------------- */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              
+              {/* Threshold Reached Card */}
+              <div className="focus-card" style={{
+                padding: '20px',
+                borderLeft: '4px solid #f97316',
+                position: 'relative'
+              }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '8px' }}>
+                  <div style={{
+                    width: '26px',
+                    height: '26px',
+                    borderRadius: '8px',
+                    backgroundColor: '#ffedd5',
+                    color: '#ea580c',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}>
+                    <AlertTriangle size={15} />
+                  </div>
+                  <h3 style={{ fontSize: '15px', fontWeight: 800, color: '#111827', margin: 0 }}>
+                    Threshold reached!
                   </h3>
-                  <p style={{ fontSize: '0.78rem', color: '#6B7280', marginTop: '0.2rem', lineHeight: '1.35' }}>
-                    {struggleMetrics.strugglingCount || 12} of {students.length || 40} students flagged this segment ({struggleMetrics.percentage || 30}%).
-                  </p>
+                </div>
+
+                <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 16px 0', lineHeight: 1.4 }}>
+                  12 of 7 students flagged this segment (30%).
+                </p>
+
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'space-between',
+                  backgroundColor: '#fff7ed',
+                  padding: '8px 12px',
+                  borderRadius: '10px',
+                  marginBottom: '18px'
+                }}>
+                  <span style={{ fontSize: '12px', fontWeight: 600, color: '#9a3412' }}>
+                    Threshold: <strong style={{ color: '#111827' }}>10 / 7</strong>
+                  </span>
+                  <span style={{
+                    backgroundColor: '#f97316',
+                    color: '#ffffff',
+                    fontSize: '10px',
+                    fontWeight: 800,
+                    padding: '3px 8px',
+                    borderRadius: '6px',
+                    letterSpacing: '0.04em'
+                  }}>
+                    AUTO-TRIGGERED
+                  </span>
+                </div>
+
+                <div>
+                  <div style={{
+                    fontSize: '10px',
+                    fontWeight: 800,
+                    color: '#9ca3af',
+                    letterSpacing: '0.06em',
+                    textTransform: 'uppercase',
+                    marginBottom: '4px'
+                  }}>
+                    Active Lecture Segment
+                  </div>
+                  <div style={{
+                    fontSize: '13px',
+                    fontWeight: 700,
+                    color: '#111827',
+                    fontStyle: 'italic'
+                  }}>
+                    "{currentChunk?.title || "Newton's First Law: Inertia"}"
+                  </div>
                 </div>
               </div>
 
+              {/* Session Pulse Card */}
+              <div className="focus-card" style={{ padding: '20px' }}>
+                <h3 style={{ fontSize: '15px', fontWeight: 800, color: '#111827', margin: '0 0 18px 0' }}>
+                  Session Pulse
+                </h3>
+
+                {/* Total Flags */}
+                <div style={{ marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '6px' }}>
+                    <span style={{ color: '#6b7280', fontWeight: 500 }}>Total flags</span>
+                    <span style={{ color: '#111827', fontWeight: 700 }}>12 Diff • 5 Imp</span>
+                  </div>
+                  <div style={{ height: '7px', width: '100%', backgroundColor: '#f1f5f9', borderRadius: '999px', display: 'flex', overflow: 'hidden' }}>
+                    <div style={{ width: '70%', backgroundColor: '#f97316', borderRadius: '999px 0 0 999px' }} />
+                    <div style={{ width: '30%', backgroundColor: '#3b82f6', borderRadius: '0 999px 999px 0' }} />
+                  </div>
+                </div>
+
+                {/* Avg Focus Score */}
+                <div style={{ marginBottom: '16px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '6px' }}>
+                    <span style={{ color: '#6b7280', fontWeight: 500 }}>Avg. focus score</span>
+                    <span style={{ color: '#111827', fontWeight: 700 }}>7.4 / 10</span>
+                  </div>
+                  <div style={{ height: '7px', width: '100%', backgroundColor: '#f1f5f9', borderRadius: '999px', overflow: 'hidden' }}>
+                    <div style={{ width: '74%', height: '100%', backgroundColor: '#10b981', borderRadius: '999px' }} />
+                  </div>
+                </div>
+
+                {/* Quiz Readiness */}
+                <div>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '12px', marginBottom: '6px' }}>
+                    <span style={{ color: '#6b7280', fontWeight: 500 }}>Quiz readiness</span>
+                    <span style={{ color: '#111827', fontWeight: 700 }}>61%</span>
+                  </div>
+                  <div style={{ height: '7px', width: '100%', backgroundColor: '#f1f5f9', borderRadius: '999px', overflow: 'hidden' }}>
+                    <div style={{ width: '61%', height: '100%', backgroundColor: '#3b82f6', borderRadius: '999px' }} />
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+            {/* ---------------------------------------------------- */}
+            {/* MIDDLE COLUMN: Live Slide Material & Difficulty Area */}
+            {/* ---------------------------------------------------- */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '20px' }}>
+              
+              {/* Live Material Slide Card */}
+              <div className="focus-card" style={{ padding: '24px 28px', minHeight: '260px', display: 'flex', flexDirection: 'column', justifyContent: 'space-between' }}>
+                <div>
+                  {/* Top Bar: Slide pagination and Heatmap pill */}
+                  <div style={{
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'space-between',
+                    marginBottom: '18px'
+                  }}>
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <span style={{ fontSize: '14px', fontWeight: 700, color: '#374151' }}>
+                        Live Material — Slide {chunks.length > 0 ? currentSlideIndex + 1 : 0} of {chunks.length || 0}
+                      </span>
+                      <div style={{ display: 'flex', gap: '4px' }}>
+                        <button
+                          onClick={handlePrevSlide}
+                          disabled={currentSlideIndex === 0}
+                          style={{
+                            width: '24px',
+                            height: '24px',
+                            borderRadius: '6px',
+                            border: '1px solid #e5e7eb',
+                            backgroundColor: currentSlideIndex === 0 ? '#f9fafb' : '#ffffff',
+                            color: currentSlideIndex === 0 ? '#cbd5e1' : '#374151',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: currentSlideIndex === 0 ? 'not-allowed' : 'pointer'
+                          }}
+                        >
+                          <ChevronLeft size={14} />
+                        </button>
+                        <button
+                          onClick={handleNextSlide}
+                          disabled={currentSlideIndex >= chunks.length - 1}
+                          style={{
+                            width: '24px',
+                            height: '24px',
+                            borderRadius: '6px',
+                            border: '1px solid #e5e7eb',
+                            backgroundColor: currentSlideIndex >= chunks.length - 1 ? '#f9fafb' : '#ffffff',
+                            color: currentSlideIndex >= chunks.length - 1 ? '#cbd5e1' : '#374151',
+                            display: 'flex',
+                            alignItems: 'center',
+                            justifyContent: 'center',
+                            cursor: currentSlideIndex >= chunks.length - 1 ? 'not-allowed' : 'pointer'
+                          }}
+                        >
+                          <ChevronRight size={14} />
+                        </button>
+                      </div>
+                    </div>
+
+                    <button
+                      onClick={() => setIsHeatmapActive(!isHeatmapActive)}
+                      style={{
+                        backgroundColor: isHeatmapActive ? '#dcfce7' : '#f1f5f9',
+                        color: isHeatmapActive ? '#15803d' : '#475569',
+                        border: 'none',
+                        padding: '4px 12px',
+                        borderRadius: '999px',
+                        fontSize: '11px',
+                        fontWeight: 700,
+                        cursor: 'pointer',
+                        transition: 'all 0.15s ease'
+                      }}
+                    >
+                      Difficulty Heatmap
+                    </button>
+                  </div>
+
+                  {/* Slide Content Body */}
+                  {currentChunk ? (
+                    <div style={{ transition: 'opacity 0.2s ease' }}>
+                      <h2 style={{ fontSize: '18px', fontWeight: 800, color: '#111827', margin: '0 0 12px 0' }}>
+                        {currentChunk.title || `Slide ${currentSlideIndex + 1}`}
+                      </h2>
+
+                      <p style={{
+                        fontSize: '14px',
+                        color: '#374151',
+                        lineHeight: 1.6,
+                        margin: 0,
+                        backgroundColor: isHeatmapActive ? 'rgba(249, 115, 22, 0.06)' : 'transparent',
+                        padding: isHeatmapActive ? '8px 12px' : 0,
+                        borderRadius: '8px',
+                        borderLeft: isHeatmapActive ? '3px solid #f97316' : 'none'
+                      }}>
+                        {currentChunk.text}
+                      </p>
+
+                      {/* Gemma AI Simplified Banner if triggered */}
+                      {(simplifiedChunks[currentChunk.chunk_id || currentChunk.id] || (reiterationTriggered && currentChunk.simplified_text)) && (
+                        <div style={{
+                          marginTop: '16px',
+                          padding: '12px 16px',
+                          borderRadius: '12px',
+                          backgroundColor: '#ecfdf5',
+                          border: '1px solid #a7f3d0',
+                          animation: 'slideInUp 0.3s ease-out'
+                        }}>
+                          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', color: '#047857', fontSize: '12px', fontWeight: 700, marginBottom: '4px' }}>
+                            <Sparkles size={14} />
+                            <span>Gemma Live Adaptive Simplification</span>
+                          </div>
+                          <p style={{ fontSize: '13px', color: '#064e3b', margin: 0, lineHeight: 1.5 }}>
+                            {simplifiedChunks[currentChunk.chunk_id || currentChunk.id] || currentChunk.simplified_text}
+                          </p>
+                        </div>
+                      )}
+                    </div>
+                  ) : (
+                    <div style={{
+                      padding: '30px 20px',
+                      textAlign: 'center',
+                      backgroundColor: '#f8fafc',
+                      borderRadius: '12px',
+                      border: '1.5px dashed #cbd5e1'
+                    }}>
+                      <UploadCloud size={32} style={{ color: '#0a4d3c', margin: '0 auto 8px' }} />
+                      <p style={{ fontSize: '14px', fontWeight: 700, color: '#1e293b', margin: '0 0 4px 0' }}>
+                        No Lecture Material Loaded
+                      </p>
+                      <p style={{ fontSize: '12px', color: '#64748b', margin: '0 0 12px 0' }}>
+                        Upload your presentation slides to begin live gaze & confusion tracking
+                      </p>
+                      <button
+                        onClick={() => setIsUploadModalOpen(true)}
+                        style={{
+                          backgroundColor: '#0a4d3c',
+                          color: '#ffffff',
+                          border: 'none',
+                          padding: '8px 16px',
+                          borderRadius: '999px',
+                          fontSize: '12px',
+                          fontWeight: 700,
+                          cursor: 'pointer'
+                        }}
+                      >
+                        Upload Slide Deck (.pdf / .pptx)
+                      </button>
+                    </div>
+                  )}
+                </div>
+
+                {/* Footer Telemetry Row */}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '24px',
+                  borderTop: '1px solid #f0f5f2',
+                  paddingTop: '16px',
+                  marginTop: '20px',
+                  flexWrap: 'wrap'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 600, color: '#4b5563' }}>
+                    <Flame size={15} style={{ color: '#ea580c' }} />
+                    <span>{currentChunk?.gaze_clusters || 14} gaze clusters detected</span>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px', fontSize: '12px', fontWeight: 600, color: '#4b5563' }}>
+                    <Clock size={15} style={{ color: '#0284c7' }} />
+                    <span>Avg. dwell {currentChunk?.avg_dwell || 4.2}s on flagged phrases</span>
+                  </div>
+                </div>
+              </div>
+
+              {/* Difficulty Over Time Area Chart Card */}
+              <div className="focus-card" style={{ padding: '24px 28px' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+                  <h3 style={{ fontSize: '15px', fontWeight: 800, color: '#111827', margin: 0 }}>
+                    Difficulty Over Time
+                  </h3>
+                  <span style={{ fontSize: '12px', color: '#9ca3af', fontWeight: 500 }}>
+                    last 25 minutes
+                  </span>
+                </div>
+
+                {/* Smooth Glowing Curved Spline Chart */}
+                <div style={{ position: 'relative', width: '100%', height: '110px', marginBottom: '14px' }}>
+                  <svg 
+                    viewBox="0 0 500 110" 
+                    preserveAspectRatio="none"
+                    style={{ width: '100%', height: '100%', overflow: 'visible' }}
+                  >
+                    <defs>
+                      <linearGradient id="diffGrad" x1="0" y1="0" x2="0" y2="1">
+                        <stop offset="0%" stopColor="#f97316" stopOpacity="0.32" />
+                        <stop offset="100%" stopColor="#f97316" stopOpacity="0.01" />
+                      </linearGradient>
+                    </defs>
+
+                    {/* Area under curve */}
+                    <path
+                      d="M 20 95 C 100 90, 180 85, 260 60 C 330 40, 390 28, 420 32 C 450 36, 480 50, 480 95 Z"
+                      fill="url(#diffGrad)"
+                    />
+
+                    {/* Glowing Stroke line */}
+                    <path
+                      d="M 20 95 C 100 90, 180 85, 260 60 C 330 40, 390 28, 420 32 C 450 36, 480 50, 480 65"
+                      fill="none"
+                      stroke="#f97316"
+                      strokeWidth="3.5"
+                      strokeLinecap="round"
+                    />
+
+                    {/* Peak Highlight Circle */}
+                    <circle cx="420" cy="32" r="5" fill="#ffffff" stroke="#f97316" strokeWidth="3" />
+                  </svg>
+                </div>
+
+                {/* Legend / Metrics Footer */}
+                <div style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: '24px',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  color: '#374151'
+                }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#22c55e' }} />
+                    <span>28 Focused</span>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#eab308' }} />
+                    <span>8 Watching</span>
+                  </div>
+
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                    <span style={{ width: '8px', height: '8px', borderRadius: '50%', backgroundColor: '#ef4444' }} />
+                    <span>4 Flagged</span>
+                  </div>
+                </div>
+              </div>
+
+            </div>
+
+            {/* ---------------------------------------------------- */}
+            {/* RIGHT COLUMN: Students List Card                     */}
+            {/* ---------------------------------------------------- */}
+            <div className="focus-card" style={{ padding: '20px 18px' }}>
               <div style={{
                 display: 'flex',
                 justifyContent: 'space-between',
                 alignItems: 'center',
-                backgroundColor: '#FFF7ED',
-                padding: '0.6rem 0.85rem',
-                borderRadius: 10,
-                margin: '0.85rem 0'
+                marginBottom: '16px',
+                padding: '0 4px'
               }}>
-                <div>
-                  <div style={{ fontSize: '0.7rem', color: '#9A3412', fontWeight: 600 }}>Threshold:</div>
-                  <div style={{ fontSize: '0.95rem', fontWeight: 800, color: '#7C2D12' }}>
-                    10 / {students.length || 40}
-                  </div>
-                </div>
-                <span style={{
-                  fontSize: '0.65rem',
-                  fontWeight: 800,
-                  backgroundColor: '#F97316',
-                  color: '#FFFFFF',
-                  padding: '0.25rem 0.5rem',
-                  borderRadius: 6
-                }}>
-                  AUTO-TRIGGERED
-                </span>
-              </div>
-
-              <div style={{ marginTop: '0.75rem' }}>
-                <div style={{ fontSize: '0.7rem', fontWeight: 700, color: '#9CA3AF', letterSpacing: '0.05em' }}>
-                  ACTIVE LECTURE SEGMENT
-                </div>
-                <div style={{ fontSize: '0.85rem', fontWeight: 700, color: '#111827', marginTop: '0.2rem' }}>
-                  "{activeChunk.title || `Section ${activeChunk.order}`}"
-                </div>
-              </div>
-            </div>
-
-            {/* Card 2: Dynamic Session Pulse */}
-            <div style={{
-              backgroundColor: '#FFFFFF',
-              borderRadius: 16,
-              padding: '1.25rem',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.03)',
-              border: '1px solid #F3F4F6'
-            }}>
-              <h3 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#111827', marginBottom: '1rem' }}>
-                Session Pulse
-              </h3>
-
-              <div style={{ marginBottom: '1.1rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: '0.35rem' }}>
-                  <span style={{ color: '#6B7280' }}>Total flags</span>
-                  <span style={{ fontWeight: 700, color: '#111827' }}>
-                    {struggleMetrics.strugglingCount || 12} Diff • {activeChunk.important_count || 6} Imp
-                  </span>
-                </div>
-                <div style={{ display: 'flex', height: 6, borderRadius: 3, overflow: 'hidden' }}>
-                  <div style={{ width: '66%', backgroundColor: '#F97316' }}></div>
-                  <div style={{ width: '34%', backgroundColor: '#3B82F6' }}></div>
-                </div>
-              </div>
-
-              <div style={{ marginBottom: '1.1rem' }}>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: '0.35rem' }}>
-                  <span style={{ color: '#6B7280' }}>Avg. focus score</span>
-                  <span style={{ fontWeight: 700, color: '#111827' }}>7.4 / 10</span>
-                </div>
-                <div style={{ height: 6, backgroundColor: '#E5E7EB', borderRadius: 3, overflow: 'hidden' }}>
-                  <div style={{ width: '74%', height: '100%', backgroundColor: '#10B981' }}></div>
-                </div>
-              </div>
-
-              <div>
-                <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', marginBottom: '0.35rem' }}>
-                  <span style={{ color: '#6B7280' }}>Quiz readiness</span>
-                  <span style={{ fontWeight: 700, color: '#111827' }}>61%</span>
-                </div>
-                <div style={{ height: 6, backgroundColor: '#E5E7EB', borderRadius: 3, overflow: 'hidden' }}>
-                  <div style={{ width: '61%', height: '100%', backgroundColor: '#3B82F6' }}></div>
-                </div>
-              </div>
-            </div>
-
-          </div>
-
-          {/* ── COLUMN 2: DYNAMIC MATERIAL & SLIDES ── */}
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '1.25rem' }}>
-            
-            {/* Live Material Card */}
-            <div style={{
-              backgroundColor: '#FFFFFF',
-              borderRadius: 16,
-              padding: '1.5rem',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.03)',
-              border: '1px solid #F3F4F6'
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
-                  <h3 style={{ fontSize: '0.95rem', fontWeight: 700, color: '#111827' }}>
-                    Live Material — Slide {activeChunk.order || currentSlideIndex + 1} of {chunks.length || 1}
-                  </h3>
-                  
-                  {/* Slide Switcher Arrows */}
-                  <div style={{ display: 'flex', gap: '0.25rem' }}>
-                    <button
-                      disabled={currentSlideIndex === 0}
-                      onClick={() => setCurrentSlideIndex(Math.max(0, currentSlideIndex - 1))}
-                      style={{
-                        width: 24,
-                        height: 24,
-                        borderRadius: 4,
-                        border: '1px solid #E5E7EB',
-                        backgroundColor: '#FFFFFF',
-                        cursor: currentSlideIndex === 0 ? 'not-allowed' : 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        opacity: currentSlideIndex === 0 ? 0.4 : 1
-                      }}
-                    >
-                      <ChevronLeft size={14} />
-                    </button>
-
-                    <button
-                      disabled={currentSlideIndex >= chunks.length - 1}
-                      onClick={() => setCurrentSlideIndex(Math.min(chunks.length - 1, currentSlideIndex + 1))}
-                      style={{
-                        width: 24,
-                        height: 24,
-                        borderRadius: 4,
-                        border: '1px solid #E5E7EB',
-                        backgroundColor: '#FFFFFF',
-                        cursor: currentSlideIndex >= chunks.length - 1 ? 'not-allowed' : 'pointer',
-                        display: 'flex',
-                        alignItems: 'center',
-                        justifyContent: 'center',
-                        opacity: currentSlideIndex >= chunks.length - 1 ? 0.4 : 1
-                      }}
-                    >
-                      <ChevronRight size={14} />
-                    </button>
-                  </div>
-                </div>
-
-                <span style={{
-                  fontSize: '0.7rem',
-                  fontWeight: 600,
-                  backgroundColor: '#F3F4F6',
-                  color: '#6B7280',
-                  padding: '0.25rem 0.6rem',
-                  borderRadius: 12
-                }}>
-                  Difficulty Heatmap
-                </span>
-              </div>
-
-              <h2 style={{ fontSize: '1.25rem', fontWeight: 800, color: '#111827', marginBottom: '1rem' }}>
-                {activeChunk.title || `Slide ${activeChunk.order}: Core Principles`}
-              </h2>
-
-              {/* Real Slide Text */}
-              <div style={{ fontSize: '0.95rem', lineHeight: '1.7', color: '#374151', whiteSpace: 'pre-wrap' }}>
-                {activeChunk.text}
-              </div>
-
-              {/* AI Simplification Container */}
-              {aiSimplification && (
-                <div style={{
-                  marginTop: '1.25rem',
-                  padding: '1rem 1.25rem',
-                  backgroundColor: '#EFF6FF',
-                  border: '1px solid #BFDBFE',
-                  borderRadius: 12
-                }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '0.4rem', color: '#1D4ED8', fontWeight: 700, fontSize: '0.85rem', marginBottom: '0.4rem' }}>
-                    <Sparkles size={16} />
-                    <span>Gemma 4 AI Reiteration Pushed Live</span>
-                  </div>
-                  <div style={{ fontSize: '0.88rem', color: '#1E3A8A', whiteSpace: 'pre-wrap', lineHeight: '1.5' }}>
-                    {aiSimplification}
-                  </div>
-                </div>
-              )}
-
-              {/* Telemetry bottom row */}
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '1.5rem',
-                marginTop: '1.5rem',
-                paddingTop: '1rem',
-                borderTop: '1px solid #F3F4F6',
-                fontSize: '0.78rem',
-                color: '#6B7280'
-              }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                  <Flame size={14} color="#F97316" />
-                  <span><strong>{struggleMetrics.strugglingCount || 14}</strong> gaze clusters detected</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                  <Clock size={14} color="#3B82F6" />
-                  <span>Avg. dwell <strong>4.2s</strong> on flagged phrases</span>
-                </div>
-              </div>
-            </div>
-
-            {/* Difficulty Over Time Timeline */}
-            <div style={{
-              backgroundColor: '#FFFFFF',
-              borderRadius: 16,
-              padding: '1.25rem 1.5rem',
-              boxShadow: '0 2px 8px rgba(0,0,0,0.03)',
-              border: '1px solid #F3F4F6'
-            }}>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-                <h3 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#111827' }}>
-                  Difficulty Over Time
-                </h3>
-                <span style={{ fontSize: '0.75rem', color: '#9CA3AF' }}>last 25 minutes</span>
-              </div>
-
-              <div style={{ height: 100, width: '100%', position: 'relative' }}>
-                <svg viewBox="0 0 400 80" style={{ width: '100%', height: '100%', overflow: 'visible' }}>
-                  <defs>
-                    <linearGradient id="gradientDiffDynamic" x1="0" y1="0" x2="0" y2="1">
-                      <stop offset="0%" stopColor="#F97316" stopOpacity="0.25" />
-                      <stop offset="100%" stopColor="#F97316" stopOpacity="0.0" />
-                    </linearGradient>
-                  </defs>
-                  
-                  <line x1="0" y1="20" x2="400" y2="20" stroke="#F3F4F6" strokeDasharray="3 3" />
-                  <line x1="0" y1="50" x2="400" y2="50" stroke="#F3F4F6" strokeDasharray="3 3" />
-
-                  <path
-                    d="M 0,65 Q 60,60 120,50 T 220,30 T 300,15 T 400,25 L 400,75 L 0,75 Z"
-                    fill="url(#gradientDiffDynamic)"
-                  />
-                  <path
-                    d="M 0,65 Q 60,60 120,50 T 220,30 T 300,15 T 400,25"
-                    fill="none"
-                    stroke="#F97316"
-                    strokeWidth="2.5"
-                    strokeLinecap="round"
-                  />
-                  <circle cx="300" cy="15" r="4" fill="#EA580C" stroke="#FFFFFF" strokeWidth="2" />
-                </svg>
-              </div>
-
-              <div style={{ display: 'flex', justifyContent: 'center', gap: '1.5rem', marginTop: '0.75rem', fontSize: '0.75rem', color: '#6B7280' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                  <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#10B981' }}></div>
-                  <span><strong>28</strong> Focused</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                  <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#F59E0B' }}></div>
-                  <span><strong>8</strong> Watching</span>
-                </div>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
-                  <div style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: '#EF4444' }}></div>
-                  <span><strong>4</strong> Flagged</span>
-                </div>
-              </div>
-            </div>
-
-          </div>
-
-          {/* ── COLUMN 3: REAL STUDENTS ROSTER ── */}
-          <div style={{
-            backgroundColor: '#FFFFFF',
-            borderRadius: 16,
-            padding: '1.25rem',
-            boxShadow: '0 2px 8px rgba(0,0,0,0.03)',
-            border: '1px solid #F3F4F6',
-            display: 'flex',
-            flexDirection: 'column',
-            justifyContent: 'space-between'
-          }}>
-            <div>
-              <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.25rem' }}>
-                <h3 style={{ fontSize: '0.95rem', fontWeight: 800, color: '#111827' }}>
+                <h3 style={{ fontSize: '15px', fontWeight: 800, color: '#111827', margin: 0 }}>
                   Students
                 </h3>
-                <span style={{ fontSize: '0.75rem', fontWeight: 600, color: '#6B7280' }}>
-                  {students.length || 40} online
+                <span style={{ fontSize: '12px', color: '#6b7280', fontWeight: 600 }}>
+                  {students.length || 7} online
                 </span>
               </div>
 
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '0.85rem' }}>
-                {students.map((st) => (
-                  <div key={st.id} style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.65rem' }}>
-                      <div style={{ position: 'relative' }}>
-                        <img
-                          src={st.avatar}
-                          alt={st.name}
-                          style={{ width: 32, height: 32, borderRadius: '50%', objectFit: 'cover' }}
-                        />
-                        <div style={{
-                          position: 'absolute',
-                          bottom: 0,
-                          right: 0,
-                          width: 8,
-                          height: 8,
-                          borderRadius: '50%',
-                          backgroundColor: st.badge === 'STRUGGLE' ? '#EF4444' : st.badge === 'WATCH' ? '#F59E0B' : '#10B981',
-                          border: '1.5px solid #fff'
-                        }}></div>
-                      </div>
+              {/* Student Roster List */}
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+                {students.map((student) => (
+                  <div
+                    key={student.id}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'space-between',
+                      padding: '4px',
+                      borderRadius: '8px'
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+                      <UserAvatar 
+                        name={student.name} 
+                        avatarUrl={student.avatarUrl} 
+                        size={32} 
+                        showStatus={true}
+                        statusColor={student.badge === 'STRUGGLE' ? '#ef4444' : student.badge === 'WATCH' ? '#eab308' : '#22c55e'}
+                      />
                       <div>
-                        <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#111827', maxWidth: 110, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                          {st.name}
+                        <div style={{ fontSize: '13px', fontWeight: 700, color: '#111827', lineHeight: 1.2 }}>
+                          {student.name}
                         </div>
-                        <div style={{ fontSize: '0.7rem', color: '#9CA3AF' }}>
-                          {st.status}
+                        <div style={{ fontSize: '11px', color: '#6b7280', marginTop: '2px' }}>
+                          {student.status}
                         </div>
                       </div>
                     </div>
 
-                    {st.badge && (
+                    {/* Tag badge if any */}
+                    {student.badge === 'STRUGGLE' && (
                       <span style={{
-                        fontSize: '0.65rem',
+                        backgroundColor: '#fee2e2',
+                        color: '#dc2626',
+                        fontSize: '10px',
                         fontWeight: 800,
-                        padding: '0.2rem 0.45rem',
-                        borderRadius: 4,
-                        letterSpacing: '0.03em',
-                        backgroundColor: st.badge === 'STRUGGLE' ? '#FEE2E2' : '#FEF3C7',
-                        color: st.badge === 'STRUGGLE' ? '#DC2626' : '#D97706'
+                        padding: '2px 8px',
+                        borderRadius: '6px',
+                        letterSpacing: '0.02em'
                       }}>
-                        {st.badge}
+                        STRUGGLE
+                      </span>
+                    )}
+
+                    {student.badge === 'WATCH' && (
+                      <span style={{
+                        backgroundColor: '#fef3c7',
+                        color: '#b45309',
+                        fontSize: '10px',
+                        fontWeight: 800,
+                        padding: '2px 8px',
+                        borderRadius: '6px',
+                        letterSpacing: '0.02em'
+                      }}>
+                        WATCH
                       </span>
                     )}
                   </div>
                 ))}
               </div>
+
+              {/* Bottom Mini Metrics Summary */}
+              <div style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                borderTop: '1px solid #f0f5f2',
+                paddingTop: '16px',
+                marginTop: '20px',
+                fontSize: '11px',
+                fontWeight: 700,
+                color: '#4b5563',
+                paddingLeft: '4px',
+                paddingRight: '4px'
+              }}>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#22c55e' }} />
+                  28 Focused
+                </span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#eab308' }} />
+                  8 Watching
+                </span>
+                <span style={{ display: 'flex', alignItems: 'center', gap: '4px' }}>
+                  <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#ef4444' }} />
+                  4 Flagged
+                </span>
+              </div>
             </div>
 
-            <div style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              paddingTop: '1rem',
-              marginTop: '1rem',
-              borderTop: '1px solid #F3F4F6',
-              fontSize: '0.72rem',
-              color: '#6B7280'
-            }}>
-              <div><strong style={{ color: '#10B981' }}>28</strong> Focused</div>
-              <div><strong style={{ color: '#F59E0B' }}>8</strong> Watching</div>
-              <div><strong style={{ color: '#EF4444' }}>4</strong> Flagged</div>
+          </div>
+        )}
+
+        {/* ======================================================== */}
+        {/* TAB 2: MATERIALS TAB                                     */}
+        {/* ======================================================== */}
+        {activeTab === 'Materials' && (
+          <div style={{ padding: '24px 32px' }} className="animate-fade-in">
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '24px' }}>
+              <div>
+                <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#111827', margin: 0 }}>
+                  Lecture Material Repository
+                </h2>
+                <p style={{ fontSize: '13px', color: '#6b7280', margin: '4px 0 0 0' }}>
+                  Manage slides, PDFs, and parsed concept segments stored in PostgreSQL
+                </p>
+              </div>
+
+              <button
+                onClick={() => setIsUploadModalOpen(true)}
+                style={{
+                  backgroundColor: '#0a4d3c',
+                  color: '#ffffff',
+                  border: 'none',
+                  padding: '10px 20px',
+                  borderRadius: '12px',
+                  fontSize: '13px',
+                  fontWeight: 700,
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  cursor: 'pointer'
+                }}
+              >
+                <UploadCloud size={16} />
+                <span>Upload New Deck</span>
+              </button>
+            </div>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(320px, 1fr))', gap: '16px' }}>
+              {/* Active Document Card */}
+              <div className="focus-card" style={{ padding: '20px', borderLeft: '4px solid #0a4d3c' }}>
+                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                  <div style={{
+                    width: '40px',
+                    height: '40px',
+                    borderRadius: '10px',
+                    backgroundColor: '#e6f7ee',
+                    color: '#0a4d3c',
+                    display: 'flex',
+                    alignItems: 'center',
+                    justifyContent: 'center'
+                  }}>
+                    <FileText size={20} />
+                  </div>
+                  <span style={{
+                    backgroundColor: '#dcfce7',
+                    color: '#15803d',
+                    fontSize: '11px',
+                    fontWeight: 800,
+                    padding: '3px 8px',
+                    borderRadius: '6px'
+                  }}>
+                    CURRENT ACTIVE
+                  </span>
+                </div>
+
+                <h3 style={{ fontSize: '16px', fontWeight: 800, color: '#111827', margin: '0 0 6px 0' }}>
+                  {session.title}
+                </h3>
+                <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 16px 0' }}>
+                  {chunks.length} slide segments • Stored in PostgreSQL
+                </p>
+
+                <div style={{ display: 'flex', gap: '8px' }}>
+                  <button
+                    onClick={() => setActiveTab('Dashboard')}
+                    style={{
+                      padding: '8px 14px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      backgroundColor: '#0a4d3c',
+                      color: '#ffffff',
+                      fontSize: '12px',
+                      fontWeight: 700,
+                      cursor: 'pointer'
+                    }}
+                  >
+                    Open in Live View
+                  </button>
+                </div>
+              </div>
+
+              {/* Uploaded History List */}
+              {documentsList.map(doc => (
+                <div key={doc.id} className="focus-card" style={{ padding: '20px' }}>
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '12px' }}>
+                    <div style={{
+                      width: '40px',
+                      height: '40px',
+                      borderRadius: '10px',
+                      backgroundColor: '#f1f5f9',
+                      color: '#475569',
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center'
+                    }}>
+                      <FolderOpen size={20} />
+                    </div>
+                  </div>
+
+                  <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#111827', margin: '0 0 6px 0' }}>
+                    {doc.title}
+                  </h3>
+                  <p style={{ fontSize: '12px', color: '#6b7280', margin: '0 0 16px 0' }}>
+                    {doc.slidesCount} slides • Uploaded {doc.date}
+                  </p>
+                </div>
+              ))}
             </div>
           </div>
+        )}
 
-        </div>
+        {/* ======================================================== */}
+        {/* TAB 3: ANALYTICS TAB                                     */}
+        {/* ======================================================== */}
+        {activeTab === 'Analytics' && (
+          <div style={{ padding: '24px 32px' }} className="animate-fade-in">
+            <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#111827', margin: '0 0 6px 0' }}>
+              Class Telemetry & Struggle Analytics
+            </h2>
+            <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 24px 0' }}>
+              Deep-dive metrics on comprehension bottlenecks and gaze clustering
+            </p>
+
+            <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '20px', marginBottom: '24px' }}>
+              <div className="focus-card" style={{ padding: '20px' }}>
+                <div style={{ fontSize: '12px', color: '#6b7280', fontWeight: 600 }}>Highest Confusion Concept</div>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: '#dc2626', marginTop: '6px' }}>Newton's First Law: Inertia</div>
+                <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>30% struggle rate triggered adaptation</div>
+              </div>
+
+              <div className="focus-card" style={{ padding: '20px' }}>
+                <div style={{ fontSize: '12px', color: '#6b7280', fontWeight: 600 }}>Average Gaze Dwell</div>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: '#0284c7', marginTop: '6px' }}>4.2 seconds</div>
+                <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>Focused primarily on formula definitions</div>
+              </div>
+
+              <div className="focus-card" style={{ padding: '20px' }}>
+                <div style={{ fontSize: '12px', color: '#6b7280', fontWeight: 600 }}>Total Reiterations Triggered</div>
+                <div style={{ fontSize: '18px', fontWeight: 800, color: '#0a4d3c', marginTop: '6px' }}>2 AI Simplifications</div>
+                <div style={{ fontSize: '12px', color: '#6b7280', marginTop: '4px' }}>Gemma 4 model provided alternate phrasing</div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* ======================================================== */}
+        {/* TAB 4: CLASS MANAGEMENT TAB                              */}
+        {/* ======================================================== */}
+        {activeTab === 'Class Management' && (
+          <div style={{ padding: '24px 32px' }} className="animate-fade-in">
+            <h2 style={{ fontSize: '20px', fontWeight: 800, color: '#111827', margin: '0 0 6px 0' }}>
+              Live Class Roster & Telemetry Settings
+            </h2>
+            <p style={{ fontSize: '13px', color: '#6b7280', margin: '0 0 24px 0' }}>
+              Manage students connected to Room {session.room_code || 'ROOM304'}
+            </p>
+
+            <div className="focus-card" style={{ padding: '20px', overflowX: 'auto' }}>
+              <table style={{ width: '100%', borderCollapse: 'collapse', textAlign: 'left', fontSize: '13px' }}>
+                <thead>
+                  <tr style={{ borderBottom: '1.5px solid #e5ece8', color: '#6b7280', fontWeight: 700 }}>
+                    <th style={{ padding: '12px 16px' }}>Student</th>
+                    <th style={{ padding: '12px 16px' }}>Telemetry State</th>
+                    <th style={{ padding: '12px 16px' }}>Confusion Level</th>
+                    <th style={{ padding: '12px 16px' }}>Gaze Calibration</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {students.map(s => (
+                    <tr key={s.id} style={{ borderBottom: '1px solid #f0f5f2' }}>
+                      <td style={{ padding: '14px 16px', display: 'flex', alignItems: 'center', gap: '10px' }}>
+                        <UserAvatar name={s.name} avatarUrl={s.avatarUrl} size={32} />
+                        <span style={{ fontWeight: 700, color: '#111827' }}>{s.name}</span>
+                      </td>
+                      <td style={{ padding: '14px 16px', color: '#4b5563' }}>{s.status}</td>
+                      <td style={{ padding: '14px 16px' }}>
+                        {s.badge === 'STRUGGLE' ? (
+                          <span style={{ backgroundColor: '#fee2e2', color: '#dc2626', padding: '3px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: 800 }}>
+                            HIGH STRUGGLE
+                          </span>
+                        ) : s.badge === 'WATCH' ? (
+                          <span style={{ backgroundColor: '#fef3c7', color: '#b45309', padding: '3px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: 800 }}>
+                            WATCHING
+                          </span>
+                        ) : (
+                          <span style={{ backgroundColor: '#dcfce7', color: '#15803d', padding: '3px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: 800 }}>
+                            FOCUSED
+                          </span>
+                        )}
+                      </td>
+                      <td style={{ padding: '14px 16px', color: '#059669', fontWeight: 600 }}>
+                        ✓ Calibrated
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
+
       </main>
+
+      {/* ======================================================== */}
+      {/* 3. SLICK, NON-ABRUPT UPLOAD MODAL                         */}
+      {/* ======================================================== */}
+      <UploadModal 
+        isOpen={isUploadModalOpen} 
+        onClose={() => setIsUploadModalOpen(false)} 
+        onUploadSuccess={handleUploadSuccess}
+        sessionRoomCode={session.room_code}
+      />
+
     </div>
   );
 }

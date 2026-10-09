@@ -10,6 +10,7 @@ class User(Base):
     email = Column(String(255), unique=True, index=True, nullable=False)
     name = Column(String(255), nullable=True)
     role = Column(String(50), default="teacher")  # teacher | student | admin
+    avatar_url = Column(String(500), nullable=True)
     otp_code = Column(String(10), nullable=True)
     otp_created_at = Column(DateTime, nullable=True)
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -62,6 +63,7 @@ class Student(Base):
     session_id = Column(Integer, ForeignKey("sessions.id"), nullable=False)
     display_name = Column(String(255), nullable=False)
     socket_id = Column(String(100), nullable=True)
+    avatar_url = Column(String(500), nullable=True)
     is_calibrated = Column(Boolean, default=False)
     joined_at = Column(DateTime, default=datetime.utcnow)
 

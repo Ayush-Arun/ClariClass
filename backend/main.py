@@ -1,6 +1,7 @@
 import os
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+# pyrefly: ignore [missing-import]
 import socketio
 
 from db.database import engine, Base

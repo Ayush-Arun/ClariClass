@@ -6,13 +6,18 @@ import TeacherUpload from './pages/TeacherUpload';
 import StudentJoin from './pages/StudentJoin';
 
 export default function App() {
-  const [currentPage, setCurrentPage] = useState('login'); // 'login' | 'teacher-dashboard' | 'student-view' | 'teacher-upload' | 'student-join'
-  const [user, setUser] = useState(null);
+  const [currentPage, setCurrentPage] = useState('teacher-dashboard'); // 'login' | 'teacher-dashboard' | 'student-view' | 'teacher-upload' | 'student-join'
+  const [user, setUser] = useState({
+    name: 'Prof. Harrison',
+    email: 'prof.harrison@university.edu',
+    role: 'teacher'
+  });
   const [sessionData, setSessionData] = useState({
     room_code: 'ROOM304',
+    title: "Physics 101 — Newton's Laws",
     document_id: 1,
     student_id: 1,
-    display_name: 'Alex Rivera'
+    display_name: 'Prof. Harrison'
   });
 
   useEffect(() => {

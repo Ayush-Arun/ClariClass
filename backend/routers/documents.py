@@ -58,6 +58,24 @@ async def upload_document(
         "chunks_count": len(parsed_chunks)
     }
 
+@router.get("")
+def list_documents(db: Session = Depends(get_db)):
+    """
+    Returns all uploaded documents with chunk counts.
+    """
+    docs = db.query(Document).order_by(Document.created_at.desc()).all()
+    results = []
+    for d in docs:
+        count = db.query(Chunk).filter(Chunk.document_id == d.id).count()
+        results.append({
+            "id": d.id,
+            "title": d.title,
+            "file_type": d.file_type,
+            "chunks_count": count,
+            "created_at": d.created_at
+        })
+    return results
+
 @router.get("/{document_id}")
 def get_document(document_id: int, db: Session = Depends(get_db)):
     doc = db.query(Document).filter(Document.id == document_id).first()
@@ -69,10 +87,12 @@ def get_document(document_id: int, db: Session = Depends(get_db)):
         "id": doc.id,
         "title": doc.title,
         "file_type": doc.file_type,
+        "created_at": doc.created_at,
         "chunks": [
             {
                 "id": c.id,
                 "order": c.chunk_order,
+                "title": c.original_text.split('\n')[0][:50] if '\n' in c.original_text else f"Slide {c.page_number}",
                 "text": c.original_text,
                 "simplified_text": c.simplified_text,
                 "page_number": c.page_number

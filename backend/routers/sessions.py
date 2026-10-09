@@ -80,3 +80,22 @@ def join_session(payload: JoinSessionSchema, db: Session = Depends(get_db)):
             for c in chunks
         ]
     }
+
+@router.get("/room/{room_code}")
+def get_session_by_room(room_code: str, db: Session = Depends(get_db)):
+    session = db.query(ClassSession).filter(ClassSession.room_code == room_code.upper().strip()).first()
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    
+    doc = session.document
+    chunks = db.query(Chunk).filter(Chunk.document_id == session.document_id).order_by(Chunk.chunk_order).all() if session.document_id else []
+
+    return {
+        "session_id": session.id,
+        "room_code": session.room_code,
+        "document_title": doc.title if doc else "Lecture Material",
+        "document_id": session.document_id,
+        "struggle_threshold_percent": session.struggle_threshold_percent,
+        "is_active": session.is_active,
+        "chunks_count": len(chunks)
+    }

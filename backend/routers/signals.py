@@ -95,3 +95,47 @@ async def ingest_signal(payload: IngestSignalSchema, db: Session = Depends(get_d
         "status": "recorded",
         "struggle_stats": struggle_res
     }
+
+class ReiterateSchema(BaseModel):
+    chunk_id: int
+    room_code: str = "ROOM304"
+
+@router.post("/reiterate")
+@router.post("/flag")
+async def trigger_reiteration(payload: IngestSignalSchema, db: Session = Depends(get_db)):
+    """
+    Teacher or system manually triggers AI adaptive simplification for a specific slide chunk.
+    """
+    chunk = db.query(Chunk).filter(Chunk.id == payload.chunk_id).first()
+    if not chunk:
+        raise HTTPException(status_code=404, detail="Chunk not found.")
+
+    # Check cache or call Gemma client
+    cached = get_cached_simplification(chunk.id)
+    if cached:
+        simplified_text = cached
+    else:
+        simplified_text = await simplify_chunk_text(chunk.original_text)
+        set_cached_simplification(chunk.id, simplified_text)
+
+    chunk.simplified_text = simplified_text
+    chunk.simplified_at = datetime.utcnow()
+    db.commit()
+
+    # Find room code if attached to session
+    room_code = "ROOM304"
+    if chunk.document and chunk.document.sessions:
+        room_code = chunk.document.sessions[0].room_code
+
+    # Broadcast simplification to all connected clients
+    await broadcast_chunk_simplified(room_code, {
+        "chunk_id": chunk.id,
+        "simplified_text": simplified_text,
+        "struggling_student_ids": []
+    })
+
+    return {
+        "status": "simplified",
+        "chunk_id": chunk.id,
+        "simplified_text": simplified_text
+    }
