@@ -1,10 +1,6 @@
 import os
 import requests
-import google.generativeai as genai
 from config import settings
-
-if settings.GEMINI_API_KEY:
-    genai.configure(api_key=settings.GEMINI_API_KEY)
 
 SIMPLIFICATION_PROMPT_TEMPLATE = """
 You are an expert pedagogical AI tutor assisting students who are struggling with difficult lecture material.
@@ -22,7 +18,7 @@ SIMPLIFIED EXPLANATION:
 async def simplify_chunk_text(original_text: str) -> str:
     """
     Calls local Ollama (gemma4:12b) to re-simplify difficult lecture text.
-    Falls back to Gemini API or a structured preview if Ollama is not responding.
+    Falls back to Gemini REST API or a structured preview if Ollama is not responding.
     """
     prompt = SIMPLIFICATION_PROMPT_TEMPLATE.format(text=original_text)
 
@@ -45,15 +41,21 @@ async def simplify_chunk_text(original_text: str) -> str:
     except Exception as ollama_err:
         print(f"[Ollama Warning] Local {settings.OLLAMA_MODEL_NAME} call failed: {ollama_err}")
 
-    # 2. Secondary Fallback: Google Gemini API (if key provided)
+    # 2. Secondary Fallback: Gemini REST API (Zero heavy SDK dependencies)
     if settings.GEMINI_API_KEY:
         try:
-            model = genai.GenerativeModel("gemini-1.5-flash")
-            response = model.generate_content(prompt)
-            if response.text:
-                return response.text.strip()
+            gemini_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key={settings.GEMINI_API_KEY}"
+            payload = {
+                "contents": [{"parts": [{"text": prompt}]}]
+            }
+            res = requests.post(gemini_url, json=payload, timeout=15)
+            if res.status_code == 200:
+                data = res.json()
+                text = data["candidates"][0]["content"]["parts"][0]["text"]
+                if text:
+                    return text.strip()
         except Exception as gemini_err:
-            print(f"[Gemini API Warning] {gemini_err}")
+            print(f"[Gemini REST API Warning] {gemini_err}")
 
     # 3. Deterministic pedagogical fallback
     return (
