@@ -1,57 +1,35 @@
 import React, { useState } from 'react';
-import { apiRequest } from '../api/client';
 import { Mail, GraduationCap } from 'lucide-react';
 
 export default function Login({ onLoginSuccess }) {
   const [email, setEmail] = useState('');
   const [role, setRole] = useState('teacher'); // 'teacher' | 'student'
-  const [otpCode, setOtpCode] = useState('');
-  const [step, setStep] = useState('request'); // 'request' | 'verify'
-  const [loading, setLoading] = useState(false);
-  const [devOtp, setDevOtp] = useState('');
-  const [error, setError] = useState('');
 
-  const handleRequestOtp = async (e) => {
+  const handleLogin = (e) => {
     e?.preventDefault();
-    if (!email) return;
-    setError('');
-    setLoading(true);
+    const userEmail = email.trim() || (role === 'teacher' ? 'prof.harrison@university.edu' : 'alex.rivera@university.edu');
+    
+    const userObj = {
+      email: userEmail,
+      name: userEmail.split('@')[0],
+      role: role
+    };
 
-    try {
-      const res = await apiRequest('/auth/request-otp', {
-        method: 'POST',
-        body: JSON.stringify({ email, role, name: email.split('@')[0] })
-      });
-      if (res.dev_otp) {
-        setDevOtp(res.dev_otp);
-      }
-      setStep('verify');
-    } catch (err) {
-      setError(err.message || 'Failed to send login code.');
-    } finally {
-      setLoading(false);
-    }
+    localStorage.setItem('clariclass_user', JSON.stringify(userObj));
+    localStorage.setItem('clariclass_token', 'mock_dev_token');
+    onLoginSuccess(userObj);
   };
 
-  const handleVerifyOtp = async (e) => {
-    e?.preventDefault();
-    if (!otpCode) return;
-    setError('');
-    setLoading(true);
-
-    try {
-      const res = await apiRequest('/auth/verify-otp', {
-        method: 'POST',
-        body: JSON.stringify({ email, otp_code: otpCode })
-      });
-      localStorage.setItem('clariclass_token', res.access_token);
-      localStorage.setItem('clariclass_user', JSON.stringify(res.user));
-      onLoginSuccess(res.user);
-    } catch (err) {
-      setError(err.message || 'Invalid login code.');
-    } finally {
-      setLoading(false);
-    }
+  const handleSocialLogin = (provider) => {
+    const userEmail = role === 'teacher' ? `teacher@${provider.toLowerCase()}.edu` : `student@${provider.toLowerCase()}.edu`;
+    const userObj = {
+      email: userEmail,
+      name: userEmail.split('@')[0],
+      role: role
+    };
+    localStorage.setItem('clariclass_user', JSON.stringify(userObj));
+    localStorage.setItem('clariclass_token', 'mock_dev_token');
+    onLoginSuccess(userObj);
   };
 
   return (
@@ -94,241 +72,136 @@ export default function Login({ onLoginSuccess }) {
         border: '1px solid rgba(0, 0, 0, 0.04)'
       }}>
         <h2 style={{ fontSize: '1.6rem', fontWeight: 800, color: '#111827', marginBottom: '0.4rem', letterSpacing: '-0.02em' }}>
-          {step === 'request' ? 'WelcomeBack' : 'Enter Login Code'}
+          WelcomeBack
         </h2>
         <p style={{ fontSize: '0.9rem', color: '#6B7280', marginBottom: '1.8rem', lineHeight: '1.4' }}>
-          {step === 'request'
-            ? 'Enter your email to receive a secure login code.'
-            : `Enter the 6-digit code dispatched to ${email}`}
+          Enter your email to receive a secure login code.
         </p>
 
-        {error && (
-          <div style={{
-            padding: '0.75rem 1rem',
-            backgroundColor: '#FEE2E2',
-            color: '#DC2626',
-            borderRadius: 10,
-            fontSize: '0.85rem',
-            marginBottom: '1.25rem',
-            fontWeight: 500
-          }}>
-            {error}
-          </div>
-        )}
-
-        {devOtp && (
-          <div style={{
-            padding: '0.75rem 1rem',
-            backgroundColor: '#D1F2E2',
-            color: '#0A4D3C',
-            borderRadius: 10,
-            fontSize: '0.85rem',
-            marginBottom: '1.25rem',
-            fontWeight: 600
-          }}>
-            Dev Mode Code: <span style={{ fontFamily: 'var(--font-mono)', fontSize: '1.05rem', marginLeft: '0.25rem' }}>{devOtp}</span>
-          </div>
-        )}
-
-        {step === 'request' ? (
-          <form onSubmit={handleRequestOtp}>
-            <div style={{ marginBottom: '1.25rem' }}>
-              <label style={{
-                display: 'block',
-                fontSize: '0.75rem',
-                fontWeight: 700,
-                color: '#6B7280',
-                letterSpacing: '0.05em',
-                marginBottom: '0.5rem',
-                textTransform: 'uppercase'
-              }}>
-                INSTITUTIONAL EMAIL
-              </label>
-              <div style={{
-                position: 'relative',
-                display: 'flex',
-                alignItems: 'center',
-                backgroundColor: '#F9FAFB',
-                borderRadius: 10,
-                border: '1px solid #E5E7EB',
-                padding: '0 0.85rem'
-              }}>
-                <Mail size={18} color="#9CA3AF" />
-                <input
-                  type="email"
-                  required
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                  placeholder="name@university.edu"
-                  style={{
-                    width: '100%',
-                    padding: '0.85rem 0.75rem',
-                    border: 'none',
-                    backgroundColor: 'transparent',
-                    outline: 'none',
-                    fontSize: '0.95rem',
-                    color: '#111827'
-                  }}
-                />
-              </div>
-            </div>
-
-            <button
-              type="submit"
-              disabled={loading}
-              style={{
-                width: '100%',
-                backgroundColor: '#0A4D3C',
-                color: '#FFFFFF',
-                border: 'none',
-                borderRadius: 12,
-                padding: '0.9rem',
-                fontSize: '0.95rem',
-                fontWeight: 700,
-                cursor: 'pointer',
-                transition: 'background 0.2s ease'
-              }}
-            >
-              {loading ? 'Sending Code...' : 'Send Login Code'}
-            </button>
-
-            {/* Social Divider */}
-            <div style={{
-              display: 'flex',
-              alignItems: 'center',
-              margin: '1.5rem 0 1.25rem',
-              color: '#9CA3AF',
+        <form onSubmit={handleLogin}>
+          <div style={{ marginBottom: '1.25rem' }}>
+            <label style={{
+              display: 'block',
               fontSize: '0.75rem',
               fontWeight: 700,
-              letterSpacing: '0.05em'
+              color: '#6B7280',
+              letterSpacing: '0.05em',
+              marginBottom: '0.5rem',
+              textTransform: 'uppercase'
             }}>
-              <div style={{ flex: 1, height: 1, backgroundColor: '#E5E7EB' }}></div>
-              <span style={{ padding: '0 0.75rem' }}>OR CONTINUE WITH</span>
-              <div style={{ flex: 1, height: 1, backgroundColor: '#E5E7EB' }}></div>
-            </div>
-
-            {/* Social Logins */}
-            <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
-              <button
-                type="button"
-                onClick={() => { setEmail('teacher@university.edu'); }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '0.5rem',
-                  padding: '0.75rem',
-                  borderRadius: 10,
-                  border: '1px solid #E5E7EB',
-                  backgroundColor: '#FFFFFF',
-                  color: '#374151',
-                  fontSize: '0.85rem',
-                  fontWeight: 600,
-                  cursor: 'pointer'
-                }}
-              >
-                <span style={{ fontWeight: 800, color: '#EA4335' }}>G</span> Google
-              </button>
-
-              <button
-                type="button"
-                onClick={() => { setEmail('student@university.edu'); }}
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  gap: '0.5rem',
-                  padding: '0.75rem',
-                  borderRadius: 10,
-                  border: '1px solid #E5E7EB',
-                  backgroundColor: '#FFFFFF',
-                  color: '#374151',
-                  fontSize: '0.85rem',
-                  fontWeight: 600,
-                  cursor: 'pointer'
-                }}
-              >
-                <span style={{ color: '#00A4EF', fontWeight: 800 }}>⊞</span> Microsoft
-              </button>
-            </div>
-          </form>
-        ) : (
-          <form onSubmit={handleVerifyOtp}>
-            <div style={{ marginBottom: '1.25rem' }}>
-              <label style={{
-                display: 'block',
-                fontSize: '0.75rem',
-                fontWeight: 700,
-                color: '#6B7280',
-                letterSpacing: '0.05em',
-                marginBottom: '0.5rem',
-                textTransform: 'uppercase'
-              }}>
-                6-DIGIT VERIFICATION CODE
-              </label>
+              INSTITUTIONAL EMAIL
+            </label>
+            <div style={{
+              position: 'relative',
+              display: 'flex',
+              alignItems: 'center',
+              backgroundColor: '#F9FAFB',
+              borderRadius: 10,
+              border: '1px solid #E5E7EB',
+              padding: '0 0.85rem'
+            }}>
+              <Mail size={18} color="#9CA3AF" />
               <input
-                type="text"
+                type="email"
                 required
-                maxLength={6}
-                value={otpCode}
-                onChange={(e) => setOtpCode(e.target.value)}
-                placeholder="123456"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="name@university.edu"
                 style={{
                   width: '100%',
-                  padding: '0.85rem',
-                  textAlign: 'center',
-                  letterSpacing: '0.3em',
-                  fontFamily: 'var(--font-mono)',
-                  fontSize: '1.3rem',
-                  fontWeight: 700,
-                  borderRadius: 10,
-                  border: '1px solid #E5E7EB',
-                  backgroundColor: '#F9FAFB',
-                  color: '#111827',
-                  outline: 'none'
+                  padding: '0.85rem 0.75rem',
+                  border: 'none',
+                  backgroundColor: 'transparent',
+                  outline: 'none',
+                  fontSize: '0.95rem',
+                  color: '#111827'
                 }}
               />
             </div>
+          </div>
 
-            <button
-              type="submit"
-              disabled={loading}
-              style={{
-                width: '100%',
-                backgroundColor: '#0A4D3C',
-                color: '#FFFFFF',
-                border: 'none',
-                borderRadius: 12,
-                padding: '0.9rem',
-                fontSize: '0.95rem',
-                fontWeight: 700,
-                cursor: 'pointer'
-              }}
-            >
-              {loading ? 'Verifying...' : 'Verify & Enter'}
-            </button>
+          <button
+            type="submit"
+            style={{
+              width: '100%',
+              backgroundColor: '#0A4D3C',
+              color: '#FFFFFF',
+              border: 'none',
+              borderRadius: 12,
+              padding: '0.9rem',
+              fontSize: '0.95rem',
+              fontWeight: 700,
+              cursor: 'pointer',
+              transition: 'background 0.2s ease',
+              boxShadow: '0 4px 12px rgba(10, 77, 60, 0.2)'
+            }}
+          >
+            Send Login Code
+          </button>
 
+          {/* Social Divider */}
+          <div style={{
+            display: 'flex',
+            alignItems: 'center',
+            margin: '1.5rem 0 1.25rem',
+            color: '#9CA3AF',
+            fontSize: '0.75rem',
+            fontWeight: 700,
+            letterSpacing: '0.05em'
+          }}>
+            <div style={{ flex: 1, height: 1, backgroundColor: '#E5E7EB' }}></div>
+            <span style={{ padding: '0 0.75rem' }}>OR CONTINUE WITH</span>
+            <div style={{ flex: 1, height: 1, backgroundColor: '#E5E7EB' }}></div>
+          </div>
+
+          {/* Social Logins */}
+          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: '0.75rem' }}>
             <button
               type="button"
-              onClick={() => setStep('request')}
+              onClick={() => handleSocialLogin('Google')}
               style={{
-                width: '100%',
-                marginTop: '0.75rem',
-                backgroundColor: 'transparent',
-                border: 'none',
-                color: '#6B7280',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '0.5rem',
+                padding: '0.75rem',
+                borderRadius: 10,
+                border: '1px solid #E5E7EB',
+                backgroundColor: '#FFFFFF',
+                color: '#374151',
                 fontSize: '0.85rem',
                 fontWeight: 600,
                 cursor: 'pointer'
               }}
             >
-              Back to change email
+              <span style={{ fontWeight: 800, color: '#EA4335' }}>G</span> Google
             </button>
-          </form>
-        )}
+
+            <button
+              type="button"
+              onClick={() => handleSocialLogin('Microsoft')}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '0.5rem',
+                padding: '0.75rem',
+                borderRadius: 10,
+                border: '1px solid #E5E7EB',
+                backgroundColor: '#FFFFFF',
+                color: '#374151',
+                fontSize: '0.85rem',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              <span style={{ color: '#00A4EF', fontWeight: 800 }}>⊞</span> Microsoft
+            </button>
+          </div>
+        </form>
       </div>
 
-      {/* Role Pill Switcher (Bottom of Login) */}
+      {/* Role Pill Switcher (Teacher / Student) */}
       <div style={{
         marginTop: '1.5rem',
         backgroundColor: '#FFFFFF',
@@ -350,8 +223,8 @@ export default function Login({ onLoginSuccess }) {
             fontSize: '0.85rem',
             fontWeight: 700,
             cursor: 'pointer',
-            backgroundColor: role === 'teacher' ? '#F3F4F6' : 'transparent',
-            color: role === 'teacher' ? '#111827' : '#6B7280'
+            backgroundColor: role === 'teacher' ? '#E8F7EE' : 'transparent',
+            color: role === 'teacher' ? '#0A4D3C' : '#6B7280'
           }}
         >
           Teacher
@@ -367,8 +240,8 @@ export default function Login({ onLoginSuccess }) {
             fontSize: '0.85rem',
             fontWeight: 700,
             cursor: 'pointer',
-            backgroundColor: role === 'student' ? '#F3F4F6' : 'transparent',
-            color: role === 'student' ? '#111827' : '#6B7280'
+            backgroundColor: role === 'student' ? '#E8F7EE' : 'transparent',
+            color: role === 'student' ? '#0A4D3C' : '#6B7280'
           }}
         >
           Student

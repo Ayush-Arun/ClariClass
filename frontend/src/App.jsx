@@ -21,6 +21,11 @@ export default function App() {
       try {
         const u = JSON.parse(cached);
         setUser(u);
+        if (u.role === 'teacher') {
+          setCurrentPage('teacher-dashboard');
+        } else if (u.role === 'student') {
+          setCurrentPage('student-view');
+        }
       } catch (e) {}
     }
   }, []);
@@ -44,92 +49,6 @@ export default function App() {
   return (
     <div style={{ minHeight: '100vh', display: 'flex', flexDirection: 'column' }}>
       
-      {/* Floating Demo Quick-Switch Bar (for testing between screens) */}
-      <div style={{
-        position: 'fixed',
-        bottom: 16,
-        left: '50%',
-        transform: 'translateX(-50%)',
-        zIndex: 9999,
-        backgroundColor: 'rgba(10, 77, 60, 0.95)',
-        backdropFilter: 'blur(8px)',
-        padding: '0.35rem 0.6rem',
-        borderRadius: 30,
-        display: 'flex',
-        alignItems: 'center',
-        gap: '0.4rem',
-        boxShadow: '0 8px 24px rgba(0,0,0,0.2)',
-        border: '1px solid rgba(255,255,255,0.2)'
-      }}>
-        <span style={{ fontSize: '0.68rem', fontWeight: 800, color: '#A7F3D0', padding: '0 0.4rem', letterSpacing: '0.04em' }}>
-          VIEW MODE:
-        </span>
-
-        <button
-          onClick={() => setCurrentPage('login')}
-          style={{
-            padding: '0.35rem 0.75rem',
-            borderRadius: 20,
-            border: 'none',
-            fontSize: '0.75rem',
-            fontWeight: 700,
-            cursor: 'pointer',
-            backgroundColor: currentPage === 'login' ? '#FFFFFF' : 'transparent',
-            color: currentPage === 'login' ? '#0A4D3C' : '#FFFFFF'
-          }}
-        >
-          1. Login
-        </button>
-
-        <button
-          onClick={() => setCurrentPage('teacher-dashboard')}
-          style={{
-            padding: '0.35rem 0.75rem',
-            borderRadius: 20,
-            border: 'none',
-            fontSize: '0.75rem',
-            fontWeight: 700,
-            cursor: 'pointer',
-            backgroundColor: currentPage === 'teacher-dashboard' ? '#FFFFFF' : 'transparent',
-            color: currentPage === 'teacher-dashboard' ? '#0A4D3C' : '#FFFFFF'
-          }}
-        >
-          2. Instructor Cockpit
-        </button>
-
-        <button
-          onClick={() => setCurrentPage('student-view')}
-          style={{
-            padding: '0.35rem 0.75rem',
-            borderRadius: 20,
-            border: 'none',
-            fontSize: '0.75rem',
-            fontWeight: 700,
-            cursor: 'pointer',
-            backgroundColor: currentPage === 'student-view' ? '#FFFFFF' : 'transparent',
-            color: currentPage === 'student-view' ? '#0A4D3C' : '#FFFFFF'
-          }}
-        >
-          3. Student Reader
-        </button>
-
-        <button
-          onClick={() => setCurrentPage('teacher-upload')}
-          style={{
-            padding: '0.35rem 0.75rem',
-            borderRadius: 20,
-            border: 'none',
-            fontSize: '0.75rem',
-            fontWeight: 700,
-            cursor: 'pointer',
-            backgroundColor: currentPage === 'teacher-upload' ? '#FFFFFF' : 'transparent',
-            color: currentPage === 'teacher-upload' ? '#0A4D3C' : '#FFFFFF'
-          }}
-        >
-          4. Upload
-        </button>
-      </div>
-
       {/* Main Routed Page */}
       <div style={{ flex: 1 }}>
         {currentPage === 'login' && (
@@ -147,7 +66,7 @@ export default function App() {
         {currentPage === 'student-view' && (
           <StudentView 
             sessionData={sessionData} 
-            onBack={() => setCurrentPage('login')}
+            onBack={handleLogout}
           />
         )}
 
