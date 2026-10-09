@@ -1,6 +1,6 @@
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException, status
-from pydantic import BaseModel, EmailStr
+from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from db.database import get_db
 from db.models import User
@@ -10,12 +10,12 @@ from config import settings
 router = APIRouter(prefix="/auth", tags=["Authentication & OTP"])
 
 class RequestOtpSchema(BaseModel):
-    email: EmailStr
+    email: str
     role: str = "teacher" # teacher | student
     name: str = ""
 
 class VerifyOtpSchema(BaseModel):
-    email: EmailStr
+    email: str
     otp_code: str
 
 @router.post("/request-otp")
@@ -47,7 +47,6 @@ def request_otp(payload: RequestOtpSchema, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(user)
 
-    # In production, trigger Email/SMS gateway here (e.g. AWS SES / Twilio / SendGrid)
     return {
         "success": True,
         "message": f"OTP successfully dispatched to {email_clean}",
@@ -65,17 +64,14 @@ def verify_otp(payload: VerifyOtpSchema, db: Session = Depends(get_db)):
     if not user or not user.otp_code:
         raise HTTPException(status_code=400, detail="Invalid OTP request or user not found.")
 
-    # Check OTP expiry (5 min default)
     if user.otp_created_at:
         expiry = user.otp_created_at + timedelta(seconds=settings.OTP_EXPIRE_SECONDS)
         if datetime.utcnow() > expiry:
             raise HTTPException(status_code=400, detail="OTP has expired. Please request a new one.")
 
-    # Verify code
     if user.otp_code != payload.otp_code.strip():
         raise HTTPException(status_code=400, detail="Incorrect OTP code entered.")
 
-    # Invalidate OTP on successful verification
     user.otp_code = None
     db.commit()
 
