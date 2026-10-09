@@ -253,7 +253,7 @@ export default function TeacherDashboard({ sessionData, onEndSession }) {
           const formattedChunks = docData.chunks.map((c, idx) => ({
             chunk_id: c.id,
             order: c.order || idx + 1,
-            title: `Section ${c.order || idx + 1}: ${docData.title.split('.')[0]}`,
+            title: c.title || `Slide ${c.page_number || idx + 1}: ${docData.title.split('.')[0]}`,
             text: c.text,
             simplified_text: c.simplified_text || null,
             struggle_percentage: 0,

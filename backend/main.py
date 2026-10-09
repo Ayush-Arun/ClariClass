@@ -32,14 +32,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Register Routers
-app.include_router(auth_router)
-app.include_router(documents_router)
-app.include_router(sessions_router)
-app.include_router(signals_router)
-app.include_router(analytics_router)
+# Register Routers (both root and /api prefixes for total frontend compatibility)
+for r in [auth_router, documents_router, sessions_router, signals_router, analytics_router]:
+    app.include_router(r)
+    app.include_router(r, prefix="/api")
 
 @app.get("/health")
+@app.get("/api/health")
 def health_check():
     return {
         "status": "healthy",
