@@ -1,53 +1,82 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   GraduationCap, 
-  ChevronLeft, 
-  ChevronRight, 
-  AlertTriangle, 
-  Star, 
-  Edit3, 
-  Hand,
-  Sparkles
+  Flag, 
+  Sparkles, 
+  Eye, 
+  EyeOff, 
+  HelpCircle, 
+  CheckCircle2, 
+  ArrowLeft,
+  Flame,
+  ShieldCheck,
+  AlertTriangle,
+  Lightbulb
 } from 'lucide-react';
 import { apiRequest } from '../api/client';
 import { socket, joinClassroom } from '../api/socket';
+import { gazeTracker } from '../services/gazeTracker';
+import CalibrationModal from '../components/CalibrationModal';
+import UserAvatar from '../components/UserAvatar';
 
 export default function StudentView({ sessionData, onBack }) {
+  const [session, setSession] = useState(sessionData || {
+    room_code: 'ROOM304',
+    title: "Physics 101 — Newton's Laws",
+    student_id: 1,
+    display_name: 'Alex Rivera'
+  });
+
   const [chunks, setChunks] = useState([]);
   const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
-  const [isDifficult, setIsDifficult] = useState(false);
-  const [isImportant, setIsImportant] = useState(false);
-  const [handRaised, setHandRaised] = useState(false);
-  const [simplifiedMap, setSimplifiedMap] = useState({});
-  const [gazePosition, setGazePosition] = useState({ x: 48, y: 52 });
+  const [activeReiteration, setActiveReiteration] = useState(null);
+  const [activeQuiz, setActiveQuiz] = useState(null);
+  const [quizAnswered, setQuizAnswered] = useState(false);
+  const [selectedOption, setSelectedOption] = useState(null);
+  
+  // Privacy & Eye tracking state
+  const [isCalibModalOpen, setIsCalibModalOpen] = useState(false);
+  const [cameraEnabled, setCameraEnabled] = useState(false);
+  const [gazeActiveBlock, setGazeActiveBlock] = useState(null);
 
+  // Student flag state
+  const [flaggedBlocks, setFlaggedBlocks] = useState({});
+  const [importantBlocks, setImportantBlocks] = useState({});
+
+  // Fetch initial session chunks
   const fetchSessionChunks = async () => {
     try {
-      const docId = sessionData?.document_id || 1;
-      const doc = await apiRequest(`/documents/${docId}`);
-      if (doc?.chunks?.length > 0) {
-        setChunks(doc.chunks);
+      const roomCode = session.room_code || 'ROOM304';
+      const res = await apiRequest(`/analytics/class/${roomCode}`);
+      if (res?.chunks && res.chunks.length > 0) {
+        setChunks(res.chunks);
       }
-    } catch (e) {
+    } catch (err) {
       if (chunks.length === 0) {
         setChunks([
           {
-            id: 1,
+            chunk_id: 1,
             order: 1,
             title: "Newton's First Law: Inertia",
-            text: "An object at rest stays at rest and an object in motion stays in motion with the same speed and in the same direction unless acted upon by an unbalanced force. This tendency to resist changes in state of motion is termed inertia."
+            text: "An object at rest stays at rest and an object in motion stays in motion with the same speed and in the same direction unless acted upon by an unbalanced force. This tendency to resist changes in state of motion is termed inertia.",
+            simplified_text: "Inertia means things keep doing what they're doing unless pushed. A stationary ball stays still; a moving ball keeps rolling forever unless friction, gravity, or a wall stops it.",
+            page_number: 1
           },
           {
-            id: 2,
+            chunk_id: 2,
             order: 2,
             title: "Newton's Second Law: F = ma",
-            text: "The acceleration of an object depends directly upon the net force acting on it and inversely upon its mass. When multiple forces act simultaneously, you must first resolve them into a single vector sum before applying the law.\n\nThis means that if you double the force while keeping mass constant, the acceleration doubles. Conversely, doubling the mass with the same force halves the acceleration. Many students confuse inertia with force—remember, inertia is a property of mass, not a push or pull."
+            text: "The acceleration of an object as produced by a net force is directly proportional to the magnitude of the net force, in the same direction as the net force, and inversely proportional to the mass of the object.",
+            simplified_text: "Force equals mass times acceleration (F = m × a). Heavier objects need stronger pushes to speed up.",
+            page_number: 2
           },
           {
-            id: 3,
+            chunk_id: 3,
             order: 3,
-            title: "Newton's Third Law: Action-Reaction",
-            text: "For every action, there is an equal and opposite reaction. Whenever one body exerts a force on a second body, the first body experiences a force that is equal in magnitude and opposite in direction to the force that it exerts."
+            title: "Newton's Third Law: Action & Reaction",
+            text: "For every action, there is an equal and opposite reaction. Whenever one body exerts a force on a second body, the first body experiences a force that is equal in magnitude and opposite in direction.",
+            simplified_text: "Every action has an equal and opposite reaction.",
+            page_number: 3
           }
         ]);
       }
@@ -57,523 +86,367 @@ export default function StudentView({ sessionData, onBack }) {
   useEffect(() => {
     fetchSessionChunks();
 
-    if (sessionData?.room_code) {
-      joinClassroom(sessionData.room_code);
+    if (session.room_code) {
+      joinClassroom(session.room_code);
 
-      socket.on('chunk_simplified', (data) => {
-        if (data.simplified_text && data.chunk_id) {
-          setSimplifiedMap((prev) => ({
-            ...prev,
-            [data.chunk_id]: data.simplified_text
-          }));
+      // Listen for teacher slide change event
+      socket.on('slide_updated', (data) => {
+        if (typeof data.slide_index === 'number') {
+          setCurrentSlideIndex(data.slide_index);
+          setActiveReiteration(null);
+          setActiveQuiz(null);
+          setQuizAnswered(false);
+        }
+      });
+
+      // Listen for live AI reiteration broadcast
+      socket.on('content_simplified', (data) => {
+        if (data.simplified_text) {
+          setActiveReiteration(data.simplified_text);
+        }
+      });
+
+      // Listen for comprehension quiz broadcast
+      socket.on('comprehension_triggered', (data) => {
+        if (data.question) {
+          setActiveQuiz(data);
+          setQuizAnswered(false);
+          setSelectedOption(null);
         }
       });
     }
 
-    return () => {
-      socket.off('chunk_simplified');
-    };
-  }, [sessionData?.room_code]);
+    // Subscribe to gaze telemetry
+    const unsubscribeGaze = gazeTracker.subscribe((state) => {
+      setCameraEnabled(state.isTracking);
+      setGazeActiveBlock(state.activeBlockId);
 
-  const activeChunk = chunks[currentSlideIndex] || chunks[0] || {
-    id: 1,
-    order: 1,
-    title: "Slide 1",
-    text: "Lecture material text will appear here."
-  };
-
-  const handleFlagDifficult = async () => {
-    const nextState = !isDifficult;
-    setIsDifficult(nextState);
-    if (nextState) {
-      try {
-        await apiRequest('/signals/ingest', {
+      // Ingest derived dwell signal periodically
+      if (state.metrics && state.metrics.dwell_ms >= 10000) {
+        apiRequest('/signals/ingest', {
           method: 'POST',
           body: JSON.stringify({
-            student_id: sessionData?.student_id || 1,
-            chunk_id: activeChunk.id || currentSlideIndex + 1,
-            signal_type: 'flag_difficult',
-            value: 1.0
+            student_id: session.student_id || 1,
+            chunk_id: parseInt(state.metrics.block_id) || 1,
+            signal_type: 'gaze_dwell',
+            value: state.metrics.dwell_ms
           })
-        });
-      } catch (e) {
-        // Fallback demo simulation
-        setSimplifiedMap((prev) => ({
-          ...prev,
-          [activeChunk.id || 1]: `💡 Simplified Breakdown (Gemma 4):\n\nKey Intuition: ${activeChunk.text.slice(0, 160)}...\n\nAnalogy: Net force is the single resultant push after subtracting opposing resistance forces like friction.`
-        }));
+        }).catch(() => {});
       }
-    }
+    });
+
+    return () => {
+      socket.off('slide_updated');
+      socket.off('content_simplified');
+      socket.off('comprehension_triggered');
+      unsubscribeGaze();
+    };
+  }, [session.room_code]);
+
+  const currentChunk = chunks[currentSlideIndex] || chunks[0];
+
+  const handleFlagDifficult = async () => {
+    if (!currentChunk) return;
+    const cid = currentChunk.chunk_id || currentChunk.id || 1;
+    setFlaggedBlocks(prev => ({ ...prev, [cid]: !prev[cid] }));
+
+    try {
+      await apiRequest('/signals/ingest', {
+        method: 'POST',
+        body: JSON.stringify({
+          student_id: session.student_id || 1,
+          chunk_id: cid,
+          signal_type: 'flag_difficult',
+          value: 1.0
+        })
+      });
+    } catch (err) {}
   };
 
   const handleFlagImportant = async () => {
-    const nextState = !isImportant;
-    setIsImportant(nextState);
-    if (nextState) {
-      try {
-        await apiRequest('/signals/ingest', {
-          method: 'POST',
-          body: JSON.stringify({
-            student_id: sessionData?.student_id || 1,
-            chunk_id: activeChunk.id || currentSlideIndex + 1,
-            signal_type: 'flag_important',
-            value: 1.0
-          })
-        });
-      } catch (e) {}
-    }
+    if (!currentChunk) return;
+    const cid = currentChunk.chunk_id || currentChunk.id || 1;
+    setImportantBlocks(prev => ({ ...prev, [cid]: !prev[cid] }));
+
+    try {
+      await apiRequest('/signals/ingest', {
+        method: 'POST',
+        body: JSON.stringify({
+          student_id: session.student_id || 1,
+          chunk_id: cid,
+          signal_type: 'flag_important',
+          value: 1.0
+        })
+      });
+    } catch (err) {}
   };
 
-  const progressPercent = Math.round(((currentSlideIndex + 1) / (chunks.length || 1)) * 100);
+  const handleQuizSubmit = (idx) => {
+    setSelectedOption(idx);
+    setQuizAnswered(true);
+
+    const isCorrect = idx === (activeQuiz?.correct_index ?? 0);
+    apiRequest('/signals/ingest', {
+      method: 'POST',
+      body: JSON.stringify({
+        student_id: session.student_id || 1,
+        chunk_id: currentChunk?.chunk_id || 1,
+        signal_type: 'quiz_response',
+        value: isCorrect ? 1.0 : 0.0
+      })
+    }).catch(() => {});
+  };
 
   return (
-    <div style={{ minHeight: '100vh', backgroundColor: '#FFFFFF', display: 'flex', flexDirection: 'column' }}>
+    <div style={{ minHeight: '100vh', backgroundColor: '#f2f8f5', display: 'flex', flexDirection: 'column' }}>
       
-      {/* ─── TOP NAVBAR ───────────────────────────────────────── */}
+      {/* Top Student Header */}
       <header style={{
+        backgroundColor: '#ffffff',
+        borderBottom: '1px solid #e5ece8',
+        padding: '16px 32px',
         display: 'flex',
         alignItems: 'center',
-        justifyContent: 'space-between',
-        padding: '0.85rem 2.5rem',
-        borderBottom: '1px solid #F3F4F6',
-        backgroundColor: '#FFFFFF'
+        justifyContent: 'space-between'
       }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }} onClick={onBack}>
-            <div style={{
-              width: 28,
-              height: 28,
-              borderRadius: 6,
-              backgroundColor: '#0A4D3C',
-              display: 'flex',
-              alignItems: 'center',
-              justifyContent: 'center',
-              color: '#FFFFFF'
-            }}>
-              <GraduationCap size={16} />
-            </div>
-            <span style={{ fontSize: '1.2rem', fontWeight: 800, color: '#0A4D3C', letterSpacing: '-0.02em' }}>
-              FocusAI<span style={{ color: '#0A4D3C' }}>.</span>
-            </span>
+        <div style={{ display: 'flex', alignItems: 'center', gap: '16px' }}>
+          <div style={{
+            width: '36px',
+            height: '36px',
+            borderRadius: '10px',
+            backgroundColor: '#0a4d3c',
+            color: '#ffffff',
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center'
+          }}>
+            <GraduationCap size={20} />
           </div>
-
-          <div style={{ height: 18, width: 1, backgroundColor: '#E5E7EB' }}></div>
-
-          <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#4B5563' }}>
-            Room: <strong style={{ color: '#0A4D3C' }}>{sessionData?.room_code || 'ROOM304'}</strong> • Student: <strong style={{ color: '#111827' }}>{sessionData?.display_name || 'Alex Rivera'}</strong>
+          <div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <span style={{ fontSize: '16px', fontWeight: 800, color: '#111827' }}>
+                {session.title || "Physics 101 — Newton's Laws"}
+              </span>
+              <span style={{
+                backgroundColor: '#cbf53d',
+                color: '#0d3d2c',
+                fontSize: '11px',
+                fontWeight: 800,
+                padding: '2px 8px',
+                borderRadius: '6px',
+                fontFamily: 'var(--font-mono)'
+              }}>
+                {session.room_code || 'ROOM304'}
+              </span>
+            </div>
+            <div style={{ fontSize: '12px', color: '#15803d', fontWeight: 600, display: 'flex', alignItems: 'center', gap: '4px', marginTop: '2px' }}>
+              <span style={{ width: '6px', height: '6px', borderRadius: '50%', backgroundColor: '#22c55e' }} />
+              Live Synchronized with Instructor
+            </div>
           </div>
         </div>
 
-        <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.4rem',
-            backgroundColor: '#D4F4E4',
-            color: '#086F4B',
-            padding: '0.3rem 0.75rem',
-            borderRadius: 16,
-            fontSize: '0.75rem',
-            fontWeight: 700
-          }}>
-            <div style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: '#086F4B' }}></div>
-            LIVE
-          </div>
+        {/* Right Controls */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+          {/* Camera Gaze Toggle */}
+          <button
+            onClick={() => setIsCalibModalOpen(true)}
+            style={{
+              padding: '8px 14px',
+              borderRadius: '999px',
+              border: '1.5px solid #d1ded7',
+              backgroundColor: cameraEnabled ? '#ecfdf5' : '#ffffff',
+              color: cameraEnabled ? '#047857' : '#4b5563',
+              fontSize: '12px',
+              fontWeight: 700,
+              display: 'flex',
+              alignItems: 'center',
+              gap: '6px',
+              cursor: 'pointer'
+            }}
+          >
+            {cameraEnabled ? <Eye size={15} /> : <EyeOff size={15} />}
+            <span>{cameraEnabled ? 'Gaze Telemetry Active' : 'Enable Eye-Tracking'}</span>
+          </button>
 
-          <span style={{ fontSize: '0.8rem', color: '#6B7280', fontFamily: 'var(--font-mono)' }}>
-            14:32 elapsed
-          </span>
+          <UserAvatar name={session.display_name || 'Student'} avatarUrl={session.avatar_url} size={36} />
 
-          <div style={{
-            display: 'flex',
-            alignItems: 'center',
-            gap: '0.4rem',
-            backgroundColor: '#111827',
-            color: '#FFFFFF',
-            padding: '0.3rem 0.8rem',
-            borderRadius: 16,
-            fontSize: '0.72rem',
-            fontWeight: 700,
-            letterSpacing: '0.04em'
-          }}>
-            <div style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: '#10B981' }}></div>
-            TRACKING ACTIVE
-          </div>
+          {onBack && (
+            <button
+              onClick={onBack}
+              style={{
+                padding: '8px 14px',
+                borderRadius: '10px',
+                border: '1px solid #e5e7eb',
+                backgroundColor: '#ffffff',
+                color: '#6b7280',
+                fontSize: '12px',
+                fontWeight: 600,
+                cursor: 'pointer'
+              }}
+            >
+              Exit
+            </button>
+          )}
         </div>
       </header>
 
-      {/* ─── MAIN CONTENT ─────────────────────────────────────── */}
-      <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 340px', maxWidth: 1400, width: '100%', margin: '0 auto', padding: '2.5rem 3rem', gap: '3.5rem' }}>
+      {/* Main Slide Content Canvas */}
+      <main style={{ flex: 1, padding: '24px 32px', maxWidth: '1000px', margin: '0 auto', width: '100%' }}>
         
-        {/* ── LEFT COLUMN: SLIDE CONTENT ── */}
-        <div style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}>
-          
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
-            <span style={{
-              fontSize: '0.75rem',
-              fontWeight: 800,
-              color: '#9CA3AF',
-              letterSpacing: '0.08em',
-              textTransform: 'uppercase'
-            }}>
-              SLIDE {currentSlideIndex + 1} OF {chunks.length || 1}
+        {/* Active Slide Card */}
+        <div 
+          id="active-slide-content"
+          className="focus-card" 
+          style={{ 
+            padding: '32px 36px', 
+            marginBottom: '20px',
+            backgroundColor: '#ffffff'
+          }}
+        >
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '16px' }}>
+            <span style={{ fontSize: '13px', fontWeight: 700, color: '#6b7280' }}>
+              Slide {currentSlideIndex + 1} of {chunks.length || 1}
             </span>
 
-            <div style={{ display: 'flex', gap: '0.4rem' }}>
-              <button 
-                disabled={currentSlideIndex === 0}
-                onClick={() => {
-                  setCurrentSlideIndex(Math.max(0, currentSlideIndex - 1));
-                  setIsDifficult(false);
-                  setIsImportant(false);
-                }}
+            {/* Quick Flag Controls */}
+            <div style={{ display: 'flex', gap: '8px' }}>
+              <button
+                onClick={handleFlagDifficult}
                 style={{
-                  width: 30,
-                  height: 30,
-                  borderRadius: 6,
-                  border: '1px solid #E5E7EB',
-                  backgroundColor: '#FFFFFF',
-                  color: '#4B5563',
+                  padding: '6px 14px',
+                  borderRadius: '999px',
+                  border: 'none',
+                  backgroundColor: flaggedBlocks[currentChunk?.chunk_id || currentChunk?.id || 1] ? '#fee2e2' : '#f1f5f9',
+                  color: flaggedBlocks[currentChunk?.chunk_id || currentChunk?.id || 1] ? '#dc2626' : '#4b5563',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: currentSlideIndex === 0 ? 'not-allowed' : 'pointer',
-                  opacity: currentSlideIndex === 0 ? 0.4 : 1
+                  gap: '6px'
                 }}
               >
-                <ChevronLeft size={16} />
+                <Flag size={13} />
+                <span>Flag Difficult</span>
               </button>
 
-              <button 
-                disabled={currentSlideIndex >= chunks.length - 1}
-                onClick={() => {
-                  setCurrentSlideIndex(Math.min(chunks.length - 1, currentSlideIndex + 1));
-                  setIsDifficult(false);
-                  setIsImportant(false);
-                }}
+              <button
+                onClick={handleFlagImportant}
                 style={{
-                  width: 30,
-                  height: 30,
-                  borderRadius: 6,
-                  border: '1px solid #E5E7EB',
-                  backgroundColor: '#FFFFFF',
-                  color: '#4B5563',
+                  padding: '6px 14px',
+                  borderRadius: '999px',
+                  border: 'none',
+                  backgroundColor: importantBlocks[currentChunk?.chunk_id || currentChunk?.id || 1] ? '#fef3c7' : '#f1f5f9',
+                  color: importantBlocks[currentChunk?.chunk_id || currentChunk?.id || 1] ? '#b45309' : '#4b5563',
+                  fontSize: '12px',
+                  fontWeight: 700,
+                  cursor: 'pointer',
                   display: 'flex',
                   alignItems: 'center',
-                  justifyContent: 'center',
-                  cursor: currentSlideIndex >= chunks.length - 1 ? 'not-allowed' : 'pointer',
-                  opacity: currentSlideIndex >= chunks.length - 1 ? 0.4 : 1
+                  gap: '6px'
                 }}
               >
-                <ChevronRight size={16} />
+                <Lightbulb size={13} />
+                <span>Mark Important</span>
               </button>
             </div>
           </div>
 
-          <div style={{ position: 'relative', marginBottom: '2.5rem' }}>
-            <h1 style={{
-              fontSize: '1.75rem',
-              fontWeight: 800,
-              color: '#111827',
-              letterSpacing: '-0.02em',
-              marginBottom: '1.5rem'
-            }}>
-              {activeChunk.title || `Slide ${activeChunk.order}`}
-            </h1>
-
-            <div style={{ fontSize: '1.1rem', lineHeight: '1.8', color: '#374151', whiteSpace: 'pre-wrap' }}>
-              {activeChunk.text}
-
-              <div style={{
-                position: 'relative',
-                display: 'inline-block',
-                width: '100%',
-                margin: '0.5rem 0'
-              }}>
-                <div style={{
-                  position: 'absolute',
-                  left: `${gazePosition.x}%`,
-                  top: '50%',
-                  width: 32,
-                  height: 32,
-                  borderRadius: '50%',
-                  border: '3px solid #3B82F6',
-                  backgroundColor: 'rgba(59, 130, 246, 0.15)',
-                  boxShadow: '0 0 16px rgba(59, 130, 246, 0.4)',
-                  animation: 'pulseGaze 2s infinite ease-in-out',
-                  pointerEvents: 'none'
-                }}></div>
-              </div>
-            </div>
-          </div>
-
-          {/* AI Simplified Drawer */}
-          {simplifiedMap[activeChunk.id || currentSlideIndex + 1] && (
-            <div style={{
-              backgroundColor: '#EFF6FF',
-              border: '1px solid #BFDBFE',
-              borderRadius: 14,
-              padding: '1.25rem',
-              marginBottom: '2rem',
-              animation: 'fadeIn 0.3s ease'
-            }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', color: '#1D4ED8', fontWeight: 700, fontSize: '0.9rem', marginBottom: '0.5rem' }}>
-                <Sparkles size={18} />
-                <span>AI Live Simplification (Gemma 4)</span>
-              </div>
-              <p style={{ fontSize: '0.95rem', color: '#1E3A8A', lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>
-                {simplifiedMap[activeChunk.id || currentSlideIndex + 1]}
+          {currentChunk ? (
+            <div 
+              data-content-block-id={currentChunk.chunk_id || currentChunk.id || 1}
+              style={{
+                borderLeft: '4px solid #0a4d3c',
+                paddingLeft: '18px'
+              }}
+            >
+              <h2 style={{ fontSize: '22px', fontWeight: 800, color: '#111827', margin: '0 0 14px 0' }}>
+                {currentChunk.title || `Slide ${currentSlideIndex + 1}`}
+              </h2>
+              <p style={{ fontSize: '15px', color: '#374151', lineHeight: 1.7, margin: 0 }}>
+                {currentChunk.text}
               </p>
             </div>
+          ) : (
+            <p style={{ color: '#6b7280' }}>Waiting for instructor to broadcast material...</p>
           )}
-
-          {/* Floating Action Pill Bar */}
-          <div style={{
-            display: 'inline-flex',
-            alignItems: 'center',
-            gap: '0.85rem',
-            backgroundColor: '#FFFFFF',
-            padding: '0.5rem 0.6rem 0.5rem 1.25rem',
-            borderRadius: 30,
-            boxShadow: '0 12px 30px rgba(0, 0, 0, 0.08), 0 2px 6px rgba(0,0,0,0.04)',
-            border: '1px solid #F3F4F6',
-            width: 'fit-content'
-          }}>
-            <button
-              onClick={handleFlagDifficult}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.35rem',
-                border: 'none',
-                backgroundColor: 'transparent',
-                color: isDifficult ? '#EA580C' : '#6B7280',
-                fontSize: '0.75rem',
-                fontWeight: 800,
-                letterSpacing: '0.04em',
-                cursor: 'pointer'
-              }}
-            >
-              <AlertTriangle size={15} color={isDifficult ? '#EA580C' : '#9CA3AF'} />
-              <span>{isDifficult ? 'FLAGGED DIFFICULT' : 'DIFFICULT'}</span>
-            </button>
-
-            <div style={{ height: 16, width: 1, backgroundColor: '#E5E7EB' }}></div>
-
-            <button
-              onClick={handleFlagImportant}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.35rem',
-                border: 'none',
-                backgroundColor: 'transparent',
-                color: isImportant ? '#D97706' : '#6B7280',
-                fontSize: '0.75rem',
-                fontWeight: 800,
-                letterSpacing: '0.04em',
-                cursor: 'pointer'
-              }}
-            >
-              <Star size={15} color={isImportant ? '#D97706' : '#9CA3AF'} />
-              <span>{isImportant ? 'FLAGGED IMPORTANT' : 'IMPORTANT'}</span>
-            </button>
-
-            <div style={{ height: 16, width: 1, backgroundColor: '#E5E7EB' }}></div>
-
-            <button style={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: '0.35rem',
-              border: 'none',
-              backgroundColor: 'transparent',
-              color: '#6B7280',
-              fontSize: '0.75rem',
-              fontWeight: 800,
-              letterSpacing: '0.04em',
-              cursor: 'pointer'
-            }}>
-              <Edit3 size={15} color="#9CA3AF" />
-              <span>ADD NOTE</span>
-            </button>
-
-            <button
-              onClick={() => setHandRaised(!handRaised)}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.45rem',
-                backgroundColor: handRaised ? '#F59E0B' : '#0A4D3C',
-                color: '#FFFFFF',
-                border: 'none',
-                borderRadius: 24,
-                padding: '0.55rem 1.15rem',
-                fontSize: '0.8rem',
-                fontWeight: 700,
-                cursor: 'pointer'
-              }}
-            >
-              <Hand size={15} />
-              <span>{handRaised ? 'Hand Raised' : 'Raise Hand'}</span>
-            </button>
-          </div>
-
         </div>
 
-        {/* ── RIGHT COLUMN: SIDEBAR ── */}
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
-          
-          <div>
-            <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#111827', marginBottom: '0.65rem' }}>
-              Teacher Video
-            </div>
-            <div style={{
-              borderRadius: 16,
-              overflow: 'hidden',
-              boxShadow: '0 4px 12px rgba(0,0,0,0.06)',
-              border: '1px solid #E5E7EB',
-              position: 'relative'
-            }}>
-              <img
-                src="https://images.unsplash.com/photo-1577896851231-70ef18881754?w=500&auto=format&fit=crop&q=80"
-                alt="Teacher stream"
-                style={{ width: '100%', height: 160, objectFit: 'cover', display: 'block' }}
-              />
-              <div style={{
-                position: 'absolute',
-                top: 8,
-                left: 8,
-                backgroundColor: 'rgba(0,0,0,0.6)',
-                backdropFilter: 'blur(4px)',
-                color: '#fff',
-                fontSize: '0.65rem',
-                fontWeight: 700,
-                padding: '0.2rem 0.5rem',
-                borderRadius: 4
-              }}>
-                Prof. Harrison
-              </div>
-            </div>
-          </div>
-
-          {/* Shared Materials */}
-          <div>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.65rem' }}>
-              <span style={{ fontSize: '0.85rem', fontWeight: 800, color: '#111827' }}>Shared Materials</span>
-              <span style={{
-                fontSize: '0.65rem',
-                fontWeight: 800,
-                backgroundColor: '#D1F2E2',
-                color: '#0A4D3C',
-                padding: '0.15rem 0.45rem',
-                borderRadius: 4
-              }}>
-                3 NEW
-              </span>
-            </div>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.75rem',
-                backgroundColor: '#F9FAFB',
-                padding: '0.75rem 0.85rem',
-                borderRadius: 12,
-                border: '1px solid #E5E7EB',
-                cursor: 'pointer'
-              }}>
-                <div style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: 8,
-                  backgroundColor: '#FEE2E2',
-                  color: '#DC2626',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '0.65rem',
-                  fontWeight: 900
-                }}>
-                  PDF
-                </div>
-                <div style={{ overflow: 'hidden' }}>
-                  <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    Laws_of_Motion.pdf
-                  </div>
-                  <div style={{ fontSize: '0.7rem', color: '#9CA3AF' }}>
-                    2.4 MB · PDF Document
-                  </div>
-                </div>
-              </div>
-
-              <div style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.75rem',
-                backgroundColor: '#F9FAFB',
-                padding: '0.75rem 0.85rem',
-                borderRadius: 12,
-                border: '1px solid #E5E7EB',
-                cursor: 'pointer'
-              }}>
-                <div style={{
-                  width: 32,
-                  height: 32,
-                  borderRadius: 8,
-                  backgroundColor: '#E0F2FE',
-                  color: '#0284C7',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  fontSize: '0.65rem',
-                  fontWeight: 900
-                }}>
-                  P
-                </div>
-                <div style={{ overflow: 'hidden' }}>
-                  <div style={{ fontSize: '0.82rem', fontWeight: 700, color: '#111827', whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>
-                    Slide_Deck_07.pptx
-                  </div>
-                  <div style={{ fontSize: '0.7rem', color: '#9CA3AF' }}>
-                    5.1 MB · PowerPoint
-                  </div>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Lesson Progress Card */}
-          <div style={{
-            backgroundColor: '#0A4D3C',
-            borderRadius: 16,
-            padding: '1.25rem',
-            color: '#FFFFFF',
-            boxShadow: '0 4px 12px rgba(10, 77, 60, 0.2)'
+        {/* Live Reiteration Explanation Banner */}
+        {(activeReiteration || currentChunk?.simplified_text) && (
+          <div className="focus-card animate-slide-up" style={{
+            padding: '24px 28px',
+            backgroundColor: '#ecfdf5',
+            border: '1.5px solid #6ee7b7',
+            borderRadius: '16px',
+            marginBottom: '20px'
           }}>
-            <div style={{
-              fontSize: '0.7rem',
-              fontWeight: 800,
-              letterSpacing: '0.06em',
-              color: '#A7F3D0',
-              marginBottom: '0.5rem',
-              textTransform: 'uppercase'
-            }}>
-              LESSON PROGRESS
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#047857', fontSize: '14px', fontWeight: 800, marginBottom: '8px' }}>
+              <Sparkles size={18} />
+              <span>Teacher Shared Gemma AI Clarification</span>
             </div>
-            
-            <div style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '0.75rem' }}>
-              {progressPercent}% Complete
-            </div>
+            <p style={{ fontSize: '14px', color: '#064e3b', lineHeight: 1.6, margin: 0 }}>
+              {activeReiteration || currentChunk.simplified_text}
+            </p>
+          </div>
+        )}
 
-            <div style={{ height: 6, backgroundColor: 'rgba(255, 255, 255, 0.2)', borderRadius: 3, overflow: 'hidden' }}>
-              <div style={{ width: `${progressPercent}%`, height: '100%', backgroundColor: '#10B981', transition: 'width 0.3s ease' }}></div>
+        {/* Comprehension Quiz Card */}
+        {activeQuiz && (
+          <div className="focus-card animate-slide-up" style={{
+            padding: '24px 28px',
+            borderLeft: '4px solid #3b82f6',
+            marginBottom: '20px'
+          }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', color: '#1d4ed8', fontSize: '13px', fontWeight: 800, marginBottom: '8px' }}>
+              <HelpCircle size={16} />
+              <span>Quick Comprehension Check</span>
+            </div>
+            <h3 style={{ fontSize: '15px', fontWeight: 700, color: '#111827', margin: '0 0 16px 0' }}>
+              {activeQuiz.question}
+            </h3>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+              {activeQuiz.options?.map((opt, idx) => (
+                <button
+                  key={idx}
+                  onClick={() => !quizAnswered && handleQuizSubmit(idx)}
+                  disabled={quizAnswered}
+                  style={{
+                    padding: '12px 16px',
+                    borderRadius: '12px',
+                    border: '1.5px solid #e5e7eb',
+                    backgroundColor: quizAnswered 
+                      ? idx === activeQuiz.correct_index 
+                        ? '#dcfce7' 
+                        : idx === selectedOption 
+                          ? '#fee2e2' 
+                          : '#ffffff'
+                      : '#ffffff',
+                    color: '#111827',
+                    textAlign: 'left',
+                    fontSize: '13px',
+                    fontWeight: 600,
+                    cursor: quizAnswered ? 'default' : 'pointer',
+                    transition: 'all 0.15s ease'
+                  }}
+                >
+                  {opt}
+                </button>
+              ))}
             </div>
           </div>
+        )}
 
-        </div>
+      </main>
 
-      </div>
+      {/* Calibration Modal */}
+      <CalibrationModal 
+        isOpen={isCalibModalOpen} 
+        onClose={() => setIsCalibModalOpen(false)}
+        onCalibrationComplete={() => setCameraEnabled(true)}
+      />
 
     </div>
   );

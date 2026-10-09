@@ -3,10 +3,10 @@ import shutil
 from fastapi import APIRouter, Depends, UploadFile, File, Form, HTTPException
 from sqlalchemy.orm import Session
 from db.database import get_db
-from db.models import Document, Chunk
+from db.models import Material, DocumentPage, ContentBlock
 from services.document_parser import parse_document
 
-router = APIRouter(prefix="/documents", tags=["Documents"])
+router = APIRouter(prefix="/documents", tags=["Documents & Materials"])
 
 UPLOAD_DIR = "./uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
@@ -18,7 +18,7 @@ async def upload_document(
     db: Session = Depends(get_db)
 ):
     """
-    Uploads a PDF or PPTX file, persists it, and parses into ordered content chunks.
+    Uploads a PDF or PPTX file, persists it, and parses into mapped document pages and content blocks.
     """
     file_ext = file.filename.split(".")[-1].lower()
     if file_ext not in ["pdf", "pptx", "ppt"]:
@@ -30,32 +30,52 @@ async def upload_document(
     with open(file_path, "wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    document = Document(
+    material = Material(
         title=doc_title,
-        file_path=file_path,
-        file_type=file_ext
+        file_url=file_path,
+        file_type=file_ext,
+        status="processed"
     )
-    db.add(document)
+    db.add(material)
     db.commit()
-    db.refresh(document)
+    db.refresh(material)
 
-    # Parse into chunks
-    parsed_chunks = parse_document(file_path, file_ext)
-    for c in parsed_chunks:
-        chunk = Chunk(
-            document_id=document.id,
-            chunk_order=c["order"],
-            original_text=c["text"],
-            page_number=c.get("page_number", 1)
+    # Parse into content blocks with bounding boxes
+    parsed_blocks = parse_document(file_path, file_ext)
+    
+    # Create pages index
+    pages_map = {}
+    for b in parsed_blocks:
+        page_num = b.get("page_number", 1)
+        if page_num not in pages_map:
+            page = DocumentPage(
+                material_id=material.id,
+                page_number=page_num,
+                width=b.get("page_width", 800.0),
+                height=b.get("page_height", 600.0)
+            )
+            db.add(page)
+            db.commit()
+            db.refresh(page)
+            pages_map[page_num] = page
+
+        block = ContentBlock(
+            page_id=pages_map[page_num].id,
+            block_order=b["order"],
+            block_hash=b.get("block_hash"),
+            title=b.get("title", f"Block {b['order']}"),
+            original_text=b["text"],
+            bbox_json=b.get("bbox")
         )
-        db.add(chunk)
+        db.add(block)
 
     db.commit()
 
     return {
-        "document_id": document.id,
-        "title": document.title,
-        "chunks_count": len(parsed_chunks)
+        "document_id": material.id,
+        "title": material.title,
+        "chunks_count": len(parsed_blocks),
+        "pages_count": len(pages_map)
     }
 
 @router.get("")
@@ -63,10 +83,15 @@ def list_documents(db: Session = Depends(get_db)):
     """
     Returns all uploaded documents with chunk counts.
     """
-    docs = db.query(Document).order_by(Document.created_at.desc()).all()
+    docs = db.query(Material).order_by(Material.created_at.desc()).all()
     results = []
     for d in docs:
-        count = db.query(Chunk).filter(Chunk.document_id == d.id).count()
+        count = (
+            db.query(ContentBlock)
+            .join(DocumentPage, ContentBlock.page_id == DocumentPage.id)
+            .filter(DocumentPage.material_id == d.id)
+            .count()
+        )
         results.append({
             "id": d.id,
             "title": d.title,
@@ -78,11 +103,18 @@ def list_documents(db: Session = Depends(get_db)):
 
 @router.get("/{document_id}")
 def get_document(document_id: int, db: Session = Depends(get_db)):
-    doc = db.query(Document).filter(Document.id == document_id).first()
+    doc = db.query(Material).filter(Material.id == document_id).first()
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found.")
     
-    chunks = db.query(Chunk).filter(Chunk.document_id == document_id).order_by(Chunk.chunk_order).all()
+    blocks = (
+        db.query(ContentBlock, DocumentPage.page_number)
+        .join(DocumentPage, ContentBlock.page_id == DocumentPage.id)
+        .filter(DocumentPage.material_id == document_id)
+        .order_by(ContentBlock.block_order)
+        .all()
+    )
+
     return {
         "id": doc.id,
         "title": doc.title,
@@ -90,13 +122,16 @@ def get_document(document_id: int, db: Session = Depends(get_db)):
         "created_at": doc.created_at,
         "chunks": [
             {
-                "id": c.id,
-                "order": c.chunk_order,
-                "title": c.original_text.split('\n')[0][:50] if '\n' in c.original_text else f"Slide {c.page_number}",
-                "text": c.original_text,
-                "simplified_text": c.simplified_text,
-                "page_number": c.page_number
+                "id": b[0].id,
+                "order": b[0].block_order,
+                "title": b[0].title or f"Slide {b[1]}",
+                "text": b[0].original_text,
+                "bbox": b[0].bbox_json,
+                "simplified_text": b[0].simplified_text,
+                "page_number": b[1],
+                "is_important": b[0].is_important,
+                "important_rationale": b[0].important_rationale
             }
-            for c in chunks
+            for b in blocks
         ]
     }
