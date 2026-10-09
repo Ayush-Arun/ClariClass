@@ -13,6 +13,9 @@ class Settings(BaseSettings):
     OTP_EXPIRE_SECONDS: int = int(os.getenv("OTP_EXPIRE_SECONDS", 300))
     OTP_DEV_BYPASS: bool = os.getenv("OTP_DEV_BYPASS", "true").lower() == "true"
 
+    OLLAMA_BASE_URL: str = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+    OLLAMA_MODEL_NAME: str = os.getenv("OLLAMA_MODEL_NAME", "gemma4:12b")
+
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     GEMMA_MODEL_NAME: str = os.getenv("GEMMA_MODEL_NAME", "gemma-4-it")
     
