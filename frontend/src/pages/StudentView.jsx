@@ -3,34 +3,69 @@ import {
   GraduationCap, 
   ChevronLeft, 
   ChevronRight, 
-  FileText, 
-  File, 
   AlertTriangle, 
   Star, 
   Edit3, 
   Hand,
-  Sparkles,
-  CheckCircle2
+  Sparkles
 } from 'lucide-react';
 import { apiRequest } from '../api/client';
 import { socket, joinClassroom } from '../api/socket';
 
 export default function StudentView({ sessionData, onBack }) {
-  const [currentSlide, setCurrentSlide] = useState(7);
-  const [totalSlides, setTotalSlides] = useState(15);
+  const [chunks, setChunks] = useState([]);
+  const [currentSlideIndex, setCurrentSlideIndex] = useState(0);
   const [isDifficult, setIsDifficult] = useState(false);
   const [isImportant, setIsImportant] = useState(false);
   const [handRaised, setHandRaised] = useState(false);
-  const [simplifiedText, setSimplifiedText] = useState('');
-  const [gazePosition, setGazePosition] = useState({ x: 48, y: 52 }); // Percentages
+  const [simplifiedMap, setSimplifiedMap] = useState({});
+  const [gazePosition, setGazePosition] = useState({ x: 48, y: 52 });
+
+  const fetchSessionChunks = async () => {
+    try {
+      const docId = sessionData?.document_id || 1;
+      const doc = await apiRequest(`/documents/${docId}`);
+      if (doc?.chunks?.length > 0) {
+        setChunks(doc.chunks);
+      }
+    } catch (e) {
+      if (chunks.length === 0) {
+        setChunks([
+          {
+            id: 1,
+            order: 1,
+            title: "Newton's First Law: Inertia",
+            text: "An object at rest stays at rest and an object in motion stays in motion with the same speed and in the same direction unless acted upon by an unbalanced force. This tendency to resist changes in state of motion is termed inertia."
+          },
+          {
+            id: 2,
+            order: 2,
+            title: "Newton's Second Law: F = ma",
+            text: "The acceleration of an object depends directly upon the net force acting on it and inversely upon its mass. When multiple forces act simultaneously, you must first resolve them into a single vector sum before applying the law.\n\nThis means that if you double the force while keeping mass constant, the acceleration doubles. Conversely, doubling the mass with the same force halves the acceleration. Many students confuse inertia with force—remember, inertia is a property of mass, not a push or pull."
+          },
+          {
+            id: 3,
+            order: 3,
+            title: "Newton's Third Law: Action-Reaction",
+            text: "For every action, there is an equal and opposite reaction. Whenever one body exerts a force on a second body, the first body experiences a force that is equal in magnitude and opposite in direction to the force that it exerts."
+          }
+        ]);
+      }
+    }
+  };
 
   useEffect(() => {
+    fetchSessionChunks();
+
     if (sessionData?.room_code) {
       joinClassroom(sessionData.room_code);
 
       socket.on('chunk_simplified', (data) => {
-        if (data.simplified_text) {
-          setSimplifiedText(data.simplified_text);
+        if (data.simplified_text && data.chunk_id) {
+          setSimplifiedMap((prev) => ({
+            ...prev,
+            [data.chunk_id]: data.simplified_text
+          }));
         }
       });
     }
@@ -38,7 +73,14 @@ export default function StudentView({ sessionData, onBack }) {
     return () => {
       socket.off('chunk_simplified');
     };
-  }, [sessionData]);
+  }, [sessionData?.room_code]);
+
+  const activeChunk = chunks[currentSlideIndex] || chunks[0] || {
+    id: 1,
+    order: 1,
+    title: "Slide 1",
+    text: "Lecture material text will appear here."
+  };
 
   const handleFlagDifficult = async () => {
     const nextState = !isDifficult;
@@ -49,13 +91,17 @@ export default function StudentView({ sessionData, onBack }) {
           method: 'POST',
           body: JSON.stringify({
             student_id: sessionData?.student_id || 1,
-            chunk_id: currentSlide,
+            chunk_id: activeChunk.id || currentSlideIndex + 1,
             signal_type: 'flag_difficult',
             value: 1.0
           })
         });
       } catch (e) {
-        console.log('Signal sent:', e);
+        // Fallback demo simulation
+        setSimplifiedMap((prev) => ({
+          ...prev,
+          [activeChunk.id || 1]: `💡 Simplified Breakdown (Gemma 4):\n\nKey Intuition: ${activeChunk.text.slice(0, 160)}...\n\nAnalogy: Net force is the single resultant push after subtracting opposing resistance forces like friction.`
+        }));
       }
     }
   };
@@ -69,16 +115,16 @@ export default function StudentView({ sessionData, onBack }) {
           method: 'POST',
           body: JSON.stringify({
             student_id: sessionData?.student_id || 1,
-            chunk_id: currentSlide,
+            chunk_id: activeChunk.id || currentSlideIndex + 1,
             signal_type: 'flag_important',
             value: 1.0
           })
         });
-      } catch (e) {
-        console.log('Signal sent:', e);
-      }
+      } catch (e) {}
     }
   };
+
+  const progressPercent = Math.round(((currentSlideIndex + 1) / (chunks.length || 1)) * 100);
 
   return (
     <div style={{ minHeight: '100vh', backgroundColor: '#FFFFFF', display: 'flex', flexDirection: 'column' }}>
@@ -92,7 +138,6 @@ export default function StudentView({ sessionData, onBack }) {
         borderBottom: '1px solid #F3F4F6',
         backgroundColor: '#FFFFFF'
       }}>
-        {/* Brand & Course Title */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '1.25rem' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', cursor: 'pointer' }} onClick={onBack}>
             <div style={{
@@ -115,11 +160,10 @@ export default function StudentView({ sessionData, onBack }) {
           <div style={{ height: 18, width: 1, backgroundColor: '#E5E7EB' }}></div>
 
           <div style={{ fontSize: '0.85rem', fontWeight: 600, color: '#4B5563' }}>
-            Physics 101: <span style={{ fontWeight: 700, color: '#111827' }}>Newton's Laws</span>
+            Room: <strong style={{ color: '#0A4D3C' }}>{sessionData?.room_code || 'ROOM304'}</strong> • Student: <strong style={{ color: '#111827' }}>{sessionData?.display_name || 'Alex Rivera'}</strong>
           </div>
         </div>
 
-        {/* Status Indicators */}
         <div style={{ display: 'flex', alignItems: 'center', gap: '0.85rem' }}>
           <div style={{
             display: 'flex',
@@ -158,13 +202,12 @@ export default function StudentView({ sessionData, onBack }) {
         </div>
       </header>
 
-      {/* ─── MAIN CONTENT TWO-COLUMN LAYOUT ──────────────────── */}
+      {/* ─── MAIN CONTENT ─────────────────────────────────────── */}
       <div style={{ flex: 1, display: 'grid', gridTemplateColumns: '1fr 340px', maxWidth: 1400, width: '100%', margin: '0 auto', padding: '2.5rem 3rem', gap: '3.5rem' }}>
         
-        {/* ── LEFT COLUMN: SLIDE CONTENT & FLOATING CONTROLS ── */}
+        {/* ── LEFT COLUMN: SLIDE CONTENT ── */}
         <div style={{ position: 'relative', display: 'flex', flexDirection: 'column' }}>
           
-          {/* Slide Navigation Header */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1.5rem' }}>
             <span style={{
               fontSize: '0.75rem',
@@ -173,12 +216,17 @@ export default function StudentView({ sessionData, onBack }) {
               letterSpacing: '0.08em',
               textTransform: 'uppercase'
             }}>
-              SLIDE {currentSlide} OF {totalSlides}
+              SLIDE {currentSlideIndex + 1} OF {chunks.length || 1}
             </span>
 
             <div style={{ display: 'flex', gap: '0.4rem' }}>
               <button 
-                onClick={() => setCurrentSlide(Math.max(1, currentSlide - 1))}
+                disabled={currentSlideIndex === 0}
+                onClick={() => {
+                  setCurrentSlideIndex(Math.max(0, currentSlideIndex - 1));
+                  setIsDifficult(false);
+                  setIsImportant(false);
+                }}
                 style={{
                   width: 30,
                   height: 30,
@@ -189,14 +237,20 @@ export default function StudentView({ sessionData, onBack }) {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  cursor: 'pointer'
+                  cursor: currentSlideIndex === 0 ? 'not-allowed' : 'pointer',
+                  opacity: currentSlideIndex === 0 ? 0.4 : 1
                 }}
               >
                 <ChevronLeft size={16} />
               </button>
 
               <button 
-                onClick={() => setCurrentSlide(Math.min(totalSlides, currentSlide + 1))}
+                disabled={currentSlideIndex >= chunks.length - 1}
+                onClick={() => {
+                  setCurrentSlideIndex(Math.min(chunks.length - 1, currentSlideIndex + 1));
+                  setIsDifficult(false);
+                  setIsImportant(false);
+                }}
                 style={{
                   width: 30,
                   height: 30,
@@ -207,7 +261,8 @@ export default function StudentView({ sessionData, onBack }) {
                   display: 'flex',
                   alignItems: 'center',
                   justifyContent: 'center',
-                  cursor: 'pointer'
+                  cursor: currentSlideIndex >= chunks.length - 1 ? 'not-allowed' : 'pointer',
+                  opacity: currentSlideIndex >= chunks.length - 1 ? 0.4 : 1
                 }}
               >
                 <ChevronRight size={16} />
@@ -215,7 +270,6 @@ export default function StudentView({ sessionData, onBack }) {
             </div>
           </div>
 
-          {/* Slide Body */}
           <div style={{ position: 'relative', marginBottom: '2.5rem' }}>
             <h1 style={{
               fontSize: '1.75rem',
@@ -224,15 +278,12 @@ export default function StudentView({ sessionData, onBack }) {
               letterSpacing: '-0.02em',
               marginBottom: '1.5rem'
             }}>
-              Newton's Second Law: F = ma
+              {activeChunk.title || `Slide ${activeChunk.order}`}
             </h1>
 
-            <div style={{ fontSize: '1.1rem', lineHeight: '1.8', color: '#374151' }}>
-              <p style={{ marginBottom: '1.5rem' }}>
-                The acceleration of an object depends directly upon the <strong>net force</strong> acting on it and inversely upon its mass. When multiple forces act simultaneously, you must first resolve them into a single vector sum before applying the law.
-              </p>
+            <div style={{ fontSize: '1.1rem', lineHeight: '1.8', color: '#374151', whiteSpace: 'pre-wrap' }}>
+              {activeChunk.text}
 
-              {/* Eye Gaze Target Ring Indicator (Blue Concentric Ring) */}
               <div style={{
                 position: 'relative',
                 display: 'inline-block',
@@ -253,15 +304,11 @@ export default function StudentView({ sessionData, onBack }) {
                   pointerEvents: 'none'
                 }}></div>
               </div>
-
-              <p>
-                This means that if you double the force while keeping mass constant, the acceleration doubles. Conversely, doubling the mass with the same force halves the acceleration. Many students confuse <strong>inertia</strong> with force—remember, inertia is a property of mass, not a push or pull.
-              </p>
             </div>
           </div>
 
-          {/* AI Simplified Drawer (When Activated) */}
-          {simplifiedText && (
+          {/* AI Simplified Drawer */}
+          {simplifiedMap[activeChunk.id || currentSlideIndex + 1] && (
             <div style={{
               backgroundColor: '#EFF6FF',
               border: '1px solid #BFDBFE',
@@ -274,13 +321,13 @@ export default function StudentView({ sessionData, onBack }) {
                 <Sparkles size={18} />
                 <span>AI Live Simplification (Gemma 4)</span>
               </div>
-              <p style={{ fontSize: '0.95rem', color: '#1E3A8A', lineHeight: '1.6' }}>
-                {simplifiedText}
+              <p style={{ fontSize: '0.95rem', color: '#1E3A8A', lineHeight: '1.6', whiteSpace: 'pre-wrap' }}>
+                {simplifiedMap[activeChunk.id || currentSlideIndex + 1]}
               </p>
             </div>
           )}
 
-          {/* Floating Action Bar Attached to Bottom of Slide Content */}
+          {/* Floating Action Pill Bar */}
           <div style={{
             display: 'inline-flex',
             alignItems: 'center',
@@ -292,7 +339,6 @@ export default function StudentView({ sessionData, onBack }) {
             border: '1px solid #F3F4F6',
             width: 'fit-content'
           }}>
-            {/* Difficult Flag Button */}
             <button
               onClick={handleFlagDifficult}
               style={{
@@ -309,12 +355,11 @@ export default function StudentView({ sessionData, onBack }) {
               }}
             >
               <AlertTriangle size={15} color={isDifficult ? '#EA580C' : '#9CA3AF'} />
-              <span>DIFFICULT</span>
+              <span>{isDifficult ? 'FLAGGED DIFFICULT' : 'DIFFICULT'}</span>
             </button>
 
             <div style={{ height: 16, width: 1, backgroundColor: '#E5E7EB' }}></div>
 
-            {/* Important Flag Button */}
             <button
               onClick={handleFlagImportant}
               style={{
@@ -331,12 +376,11 @@ export default function StudentView({ sessionData, onBack }) {
               }}
             >
               <Star size={15} color={isImportant ? '#D97706' : '#9CA3AF'} />
-              <span>IMPORTANT</span>
+              <span>{isImportant ? 'FLAGGED IMPORTANT' : 'IMPORTANT'}</span>
             </button>
 
             <div style={{ height: 16, width: 1, backgroundColor: '#E5E7EB' }}></div>
 
-            {/* Add Note Button */}
             <button style={{
               display: 'flex',
               alignItems: 'center',
@@ -353,7 +397,6 @@ export default function StudentView({ sessionData, onBack }) {
               <span>ADD NOTE</span>
             </button>
 
-            {/* Raise Hand Button */}
             <button
               onClick={() => setHandRaised(!handRaised)}
               style={{
@@ -367,8 +410,7 @@ export default function StudentView({ sessionData, onBack }) {
                 padding: '0.55rem 1.15rem',
                 fontSize: '0.8rem',
                 fontWeight: 700,
-                cursor: 'pointer',
-                transition: 'background 0.2s ease'
+                cursor: 'pointer'
               }}
             >
               <Hand size={15} />
@@ -378,10 +420,9 @@ export default function StudentView({ sessionData, onBack }) {
 
         </div>
 
-        {/* ── RIGHT COLUMN: TEACHER VIDEO, SHARED MATERIALS, PROGRESS ── */}
+        {/* ── RIGHT COLUMN: SIDEBAR ── */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: '1.75rem' }}>
           
-          {/* Teacher Video Widget */}
           <div>
             <div style={{ fontSize: '0.85rem', fontWeight: 800, color: '#111827', marginBottom: '0.65rem' }}>
               Teacher Video
@@ -432,7 +473,6 @@ export default function StudentView({ sessionData, onBack }) {
             </div>
 
             <div style={{ display: 'flex', flexDirection: 'column', gap: '0.65rem' }}>
-              {/* PDF Document Card */}
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -467,7 +507,6 @@ export default function StudentView({ sessionData, onBack }) {
                 </div>
               </div>
 
-              {/* PPTX Document Card */}
               <div style={{
                 display: 'flex',
                 alignItems: 'center',
@@ -524,12 +563,11 @@ export default function StudentView({ sessionData, onBack }) {
             </div>
             
             <div style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '0.75rem' }}>
-              48% Complete
+              {progressPercent}% Complete
             </div>
 
-            {/* Progress Bar */}
             <div style={{ height: 6, backgroundColor: 'rgba(255, 255, 255, 0.2)', borderRadius: 3, overflow: 'hidden' }}>
-              <div style={{ width: '48%', height: '100%', backgroundColor: '#10B981' }}></div>
+              <div style={{ width: `${progressPercent}%`, height: '100%', backgroundColor: '#10B981', transition: 'width 0.3s ease' }}></div>
             </div>
           </div>
 
